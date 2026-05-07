@@ -1,0 +1,23 @@
+{
+  "name": "ask-ai",
+  "private": true,
+  "packageManager": "pnpm@10.20.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "db:push": "tsx scripts/db-push.ts",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "doris:init": "tsx scripts/doris-init.ts",
+    "seed:dev": "tsx scripts/seed-dev.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "dotenv": "^17.4.2",
+    "tsx": "^4.20.6",
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.8"
+  }
+}
