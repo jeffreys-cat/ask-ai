@@ -1,4 +1,4 @@
-import { createAskRepo } from "@selectdb/db";
+import { createAskRepo, createDocumentsRepo, createProjectsRepo } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
 import { runAskDocsWorkflow } from "@selectdb/ai";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
@@ -13,6 +13,7 @@ export async function POST(request: Request) {
     const ctx = getRequestContext(request.headers);
     const body = (await request.json()) as {
       question?: string;
+      projectId?: string;
       documentIds?: string[];
       topK?: number;
       includeDebugChunks?: boolean;
@@ -21,6 +22,12 @@ export async function POST(request: Request) {
     if (!body.question?.trim()) throw new BadRequestError("question is required");
 
     const db = getDb();
+    const documentIds = await resolveDocumentIds({
+      organizationId: ctx.organizationId,
+      projectId: body.projectId,
+      documentIds: body.documentIds,
+      db,
+    });
     const sessionId = crypto.randomUUID();
     const askRepo = createAskRepo(db);
     await askRepo.createSession({
@@ -28,7 +35,7 @@ export async function POST(request: Request) {
       organizationId: ctx.organizationId,
       userId: ctx.userId,
       question: body.question.trim(),
-      metadata: { documentIds: body.documentIds, topK: body.topK },
+      metadata: { projectId: body.projectId, documentIds, topK: body.topK },
     });
 
     const stream = new ReadableStream<Uint8Array>({
@@ -47,7 +54,7 @@ export async function POST(request: Request) {
             search: (input) => createChunkStore(getDoris()).searchChunks(input),
           },
           embeddings: embeddingProviderFromEnv(),
-          documentIds: body.documentIds,
+          documentIds,
           topK: body.topK,
           includeDebugChunks: body.includeDebugChunks,
         })) {
@@ -77,4 +84,20 @@ export async function POST(request: Request) {
       headers: { "content-type": "text/event-stream; charset=utf-8" },
     });
   }
+}
+
+async function resolveDocumentIds(input: {
+  organizationId: string;
+  projectId?: string;
+  documentIds?: string[];
+  db: ReturnType<typeof getDb>;
+}) {
+  if (!input.projectId) return input.documentIds;
+
+  const project = await createProjectsRepo(input.db).findById(input.organizationId, input.projectId);
+  if (!project) throw new BadRequestError("project not found");
+
+  const documents = await createDocumentsRepo(input.db).listReadyByProject(input.organizationId, input.projectId);
+  if (documents.length === 0) throw new BadRequestError("project has no ready documents");
+  return documents.map((document) => document.id);
 }

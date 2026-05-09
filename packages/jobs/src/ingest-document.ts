@@ -4,6 +4,7 @@ import type { DbClient } from "@selectdb/db";
 import { createDocumentsRepo, createIngestionRepo } from "@selectdb/db";
 import type { DorisPool } from "@selectdb/doris";
 import { createChunkStore } from "@selectdb/doris";
+import { createLogger, serializeError } from "@selectdb/logger";
 import { chunkHtml, chunkMarkdown, embeddingProviderFromEnv, splitTextIntoChunks, type EmbeddingProvider } from "@selectdb/rag";
 
 export interface IngestDocumentInput {
@@ -13,6 +14,7 @@ export interface IngestDocumentInput {
   content: string;
   mimeType?: string | null;
   title?: string;
+  sourceUri?: string;
   metadata?: JsonObject;
   db: DbClient;
   doris: DorisPool;
@@ -20,6 +22,13 @@ export interface IngestDocumentInput {
 }
 
 export async function ingestDocument(input: IngestDocumentInput) {
+  const log = createLogger({
+    component: "jobs.ingest-document",
+    organizationId: input.organizationId,
+    documentId: input.documentId,
+    ingestionId: input.ingestionId,
+    sourceUri: input.sourceUri,
+  });
   const documentsRepo = createDocumentsRepo(input.db);
   const ingestionRepo = createIngestionRepo(input.db);
 
@@ -29,6 +38,7 @@ export async function ingestDocument(input: IngestDocumentInput) {
     status: "running",
   });
   await documentsRepo.updateStatus(input.organizationId, input.documentId, "ingesting");
+  log.info("document ingestion started", { mimeType: input.mimeType, title: input.title, contentLength: input.content.length });
 
   try {
     const chunks = chunkByMime(input.content, {
@@ -36,20 +46,42 @@ export async function ingestDocument(input: IngestDocumentInput) {
       mimeType: input.mimeType,
       metadata: input.metadata,
     });
+
+    const chunkStore = createChunkStore(input.doris);
+    await chunkStore.deleteDocumentChunks(input.organizationId, input.documentId);
+
+    if (chunks.length === 0) {
+      log.warn("document ingestion produced no chunks", { mimeType: input.mimeType, title: input.title });
+      await documentsRepo.updateStatus(input.organizationId, input.documentId, "ready");
+      await ingestionRepo.updateStatus({
+        organizationId: input.organizationId,
+        ingestionId: input.ingestionId,
+        status: "completed",
+        chunkCount: 0,
+      });
+      return { chunkCount: 0 };
+    }
+
+    log.info("document chunks created", {
+      chunkCount: chunks.length,
+      totalChunkChars: chunks.reduce((sum, chunk) => sum + chunk.content.length, 0),
+      maxChunkChars: Math.max(...chunks.map((chunk) => chunk.content.length)),
+    });
     const vectors = await (input.embeddings ?? embeddingProviderFromEnv()).embed(chunks.map((chunk) => chunk.content));
+    log.info("document embeddings created", { chunkCount: chunks.length, vectorCount: vectors.length });
     const documentChunks: DocumentChunk[] = chunks.map((chunk, index) => ({
       organizationId: input.organizationId,
       documentId: input.documentId,
       chunkId: chunk.chunkId,
       content: chunk.content,
       title: input.title,
+      sourceUri: input.sourceUri,
       metadata: chunk.metadata,
       embedding: vectors[index] ?? [],
     }));
 
-    const chunkStore = createChunkStore(input.doris);
-    await chunkStore.deleteDocumentChunks(input.organizationId, input.documentId);
     await chunkStore.upsertChunks(documentChunks);
+    log.info("document chunks stored", { chunkCount: documentChunks.length });
     await documentsRepo.updateStatus(input.organizationId, input.documentId, "ready");
     await ingestionRepo.updateStatus({
       organizationId: input.organizationId,
@@ -61,6 +93,7 @@ export async function ingestDocument(input: IngestDocumentInput) {
     return { chunkCount: documentChunks.length };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown ingestion error";
+    log.error("document ingestion failed", { error: serializeError(error) });
     await documentsRepo.updateStatus(input.organizationId, input.documentId, "failed");
     await ingestionRepo.updateStatus({
       organizationId: input.organizationId,

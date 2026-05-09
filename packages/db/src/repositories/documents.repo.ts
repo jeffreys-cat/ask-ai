@@ -6,6 +6,7 @@ import { documents } from "../schema";
 export interface CreateDocumentInput {
   id: string;
   organizationId: string;
+  projectId?: string | null;
   title: string;
   sourceType: SourceType;
   mimeType?: string | null;
@@ -27,6 +28,22 @@ export function createDocumentsRepo(db: DbClient) {
         .where(and(eq(documents.organizationId, organizationId), eq(documents.id, documentId)))
         .limit(1);
       return document ?? null;
+    },
+
+    async listByProject(organizationId: string, projectId: string) {
+      return db
+        .select()
+        .from(documents)
+        .where(and(eq(documents.organizationId, organizationId), eq(documents.projectId, projectId)));
+    },
+
+    async listReadyByProject(organizationId: string, projectId: string) {
+      return db
+        .select()
+        .from(documents)
+        .where(
+          and(eq(documents.organizationId, organizationId), eq(documents.projectId, projectId), eq(documents.status, "ready")),
+        );
     },
 
     async updateStatus(organizationId: string, documentId: string, status: DocumentStatus) {

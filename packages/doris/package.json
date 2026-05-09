@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@selectdb/logger": "workspace:*",
     "@selectdb/shared": "workspace:*",
     "mysql2": "^3.15.3"
   },

@@ -1,56 +1,67 @@
 "use client";
 
-import { FileUp, Send, Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { Loader2, RefreshCw, Send } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import type { AskStreamEvent, Citation, RetrievedChunk } from "@selectdb/shared";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { CitationList } from "./CitationList";
 import { RetrievedChunks } from "./RetrievedChunks";
-import type { AskStreamEvent, Citation, RetrievedChunk } from "@selectdb/shared";
-import "./ask.css";
+
+interface ProjectSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  status: string;
+}
 
 export function AskPanel() {
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
-  const [documentId, setDocumentId] = useState("");
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
   const [chunks, setChunks] = useState<RetrievedChunk[]>([]);
-  const [status, setStatus] = useState("Ready");
+  const [status, setStatus] = useState("Loading projects");
+  const [error, setError] = useState("");
   const [debug, setDebug] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
 
-  const canUpload = useMemo(() => title.trim().length > 0 && content.trim().length > 0 && !isBusy, [title, content, isBusy]);
-  const canAsk = useMemo(() => question.trim().length > 0 && !isBusy, [question, isBusy]);
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? null,
+    [projects, selectedProjectId],
+  );
+  const readyProjects = useMemo(() => projects.filter((project) => project.status === "ready"), [projects]);
+  const canAsk = question.trim().length > 0 && selectedProject?.status === "ready" && !isBusy;
 
-  async function uploadDocument() {
-    setIsBusy(true);
-    setStatus("Creating document");
+  useEffect(() => {
+    void loadProjects();
+  }, []);
+
+  async function loadProjects() {
+    setIsLoadingProjects(true);
+    setError("");
     try {
-      const documentResponse = await fetch("/api/documents", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title, sourceType: "upload", mimeType: "text/markdown" }),
-      });
-      if (!documentResponse.ok) throw new Error(await documentResponse.text());
-      const documentPayload = (await documentResponse.json()) as { documentId: string };
-      setDocumentId(documentPayload.documentId);
-
-      setStatus("Ingesting document");
-      const ingestResponse = await fetch("/api/ingest", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          documentId: documentPayload.documentId,
-          content,
-          mimeType: "text/markdown",
-        }),
-      });
-      if (!ingestResponse.ok) throw new Error(await ingestResponse.text());
-      setStatus("Document ready");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Upload failed");
+      const response = await fetch("/api/projects");
+      if (!response.ok) throw new Error(await response.text());
+      const payload = (await response.json()) as { projects: ProjectSummary[] };
+      setProjects(payload.projects);
+      const firstReady = payload.projects.find((project) => project.status === "ready") ?? payload.projects[0];
+      setSelectedProjectId((current) => current || firstReady?.id || "");
+      setStatus(firstReady ? "Ready" : "No projects available");
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Failed to load projects";
+      setError(message);
+      setStatus(message);
     } finally {
-      setIsBusy(false);
+      setIsLoadingProjects(false);
     }
   }
 
@@ -59,6 +70,7 @@ export function AskPanel() {
     setAnswer("");
     setCitations([]);
     setChunks([]);
+    setError("");
     setStatus("Retrieving context");
 
     try {
@@ -67,7 +79,7 @@ export function AskPanel() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           question,
-          documentIds: documentId ? [documentId] : undefined,
+          projectId: selectedProjectId,
           topK: 8,
           includeDebugChunks: debug,
         }),
@@ -94,73 +106,116 @@ export function AskPanel() {
           if (event.type === "retrieved_chunks") setChunks(event.chunks);
           if (event.type === "citations") setCitations(event.citations);
           if (event.type === "done") setStatus("Done");
-          if (event.type === "error") setStatus(event.message);
+          if (event.type === "error") {
+            setStatus(event.message);
+            setError(event.message);
+          }
         }
       }
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Ask failed");
+    } catch (askError) {
+      const message = askError instanceof Error ? askError.message : "Ask failed";
+      setStatus(message);
+      setError(message);
     } finally {
       setIsBusy(false);
     }
   }
 
   return (
-    <div className="ask-grid">
-      <section className="panel input-panel">
-        <div className="panel-title">
-          <FileUp size={18} />
-          <h2>Document</h2>
-        </div>
-        <label>
-          Title
-          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Q2 Product Brief" />
-        </label>
-        <label>
-          Content
-          <textarea
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            placeholder="Paste markdown, HTML text, or plain text for the first version."
-          />
-        </label>
-        <button className="primary-button" disabled={!canUpload} onClick={uploadDocument}>
-          {isBusy ? <Loader2 className="spin" size={16} /> : <FileUp size={16} />}
-          Upload and ingest
-        </button>
-        <div className="status-row">
-          <span>{status}</span>
-          {documentId ? <code>{documentId}</code> : null}
-        </div>
-      </section>
+    <div className="grid gap-6">
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTitle>Request failed</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      <section className="panel answer-panel">
-        <div className="panel-title">
-          <Send size={18} />
-          <h2>Ask</h2>
-        </div>
-        <label>
-          Question
-          <textarea
-            className="question-box"
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder="What does this document say about launch risks?"
-          />
-        </label>
-        <div className="toolbar-row">
-          <label className="checkbox-row">
-            <input type="checkbox" checked={debug} onChange={(event) => setDebug(event.target.checked)} />
-            Show retrieved chunks
-          </label>
-          <button className="primary-button" disabled={!canAsk} onClick={ask}>
-            {isBusy ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
-            Ask
-          </button>
-        </div>
-        <article className="answer-box">{answer || "The answer stream will appear here."}</article>
-        <CitationList citations={citations} />
-      </section>
+      {isLoadingProjects ? (
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-4 w-72" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-28 w-full" />
+          </CardContent>
+        </Card>
+      ) : projects.length === 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>No indexed projects</CardTitle>
+            <CardDescription>Create a project and ingest Markdown files before asking questions.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link href="/admin/projects">Open projects</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Ask a project</CardTitle>
+            <CardDescription>Questions are scoped to the selected project's ready Markdown documents.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-5">
+            <div className="grid gap-2">
+              <Label>Project</Label>
+              <div className="flex gap-2">
+                <Select value={selectedProjectId} onValueChange={setSelectedProjectId} disabled={isBusy}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        {project.name} {project.status !== "ready" ? `(${project.status})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="icon" onClick={loadProjects} disabled={isLoadingProjects || isBusy} aria-label="Refresh projects">
+                  {isLoadingProjects ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                </Button>
+              </div>
+              {selectedProject ? <p className="text-sm text-muted-foreground">{selectedProject.description || selectedProject.id}</p> : null}
+              {readyProjects.length === 0 ? <p className="text-sm text-destructive">No ready projects yet. Ingest Markdown files from Projects first.</p> : null}
+            </div>
 
+            <div className="grid gap-2">
+              <Label htmlFor="question">Question</Label>
+              <Textarea
+                id="question"
+                className="min-h-28"
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                placeholder="What does this project say about configuration?"
+              />
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" checked={debug} onChange={(event) => setDebug(event.target.checked)} />
+                Show retrieved chunks
+              </label>
+              <Button disabled={!canAsk} onClick={ask}>
+                {isBusy ? <Loader2 className="animate-spin" /> : <Send />}
+                Ask
+              </Button>
+            </div>
+
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+              <span>{status}</span>
+            </div>
+
+            <article className="min-h-48 whitespace-pre-wrap rounded-lg border bg-background p-4 text-sm leading-7">
+              {answer || "The answer stream will appear here."}
+            </article>
+          </CardContent>
+        </Card>
+      )}
+
+      <CitationList citations={citations} />
       <RetrievedChunks chunks={chunks} />
     </div>
   );

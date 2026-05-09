@@ -1,6 +1,7 @@
 export type ID = string;
 
-export type SourceType = "upload" | "paste" | "url";
+export type SourceType = "upload" | "paste" | "url" | "project_upload";
+export type ProjectStatus = "created" | "ingesting" | "ready" | "failed" | "deleted";
 export type DocumentStatus = "created" | "ingesting" | "ready" | "failed" | "deleted";
 export type IngestionStatus = "queued" | "running" | "completed" | "failed";
 

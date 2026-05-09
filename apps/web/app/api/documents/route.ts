@@ -9,14 +9,14 @@ export async function POST(request: Request) {
     const ctx = getRequestContext(request.headers);
     const body = (await request.json()) as {
       title?: string;
-      sourceType?: "upload" | "paste" | "url";
+      sourceType?: "upload" | "paste" | "url" | "project_upload";
       mimeType?: string;
       metadata?: Record<string, unknown>;
     };
 
     if (!body.title?.trim()) throw new BadRequestError("title is required");
-    if (body.sourceType !== "upload" && body.sourceType !== "paste" && body.sourceType !== "url") {
-      throw new BadRequestError("sourceType must be upload, paste or url");
+    if (body.sourceType !== "upload" && body.sourceType !== "paste" && body.sourceType !== "url" && body.sourceType !== "project_upload") {
+      throw new BadRequestError("sourceType must be upload, paste, url or project_upload");
     }
 
     const repo = createDocumentsRepo(getDb());
