@@ -12,9 +12,10 @@ import { Sidebar, SidebarContent, SidebarHeader, SidebarInset, SidebarMenu, Side
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProjectStatusBadge } from "./status";
 import { ProjectIngest } from "./ProjectIngest";
+import { ProjectIngestNew } from "./ProjectIngestNew";
 import type { ProjectSummary } from "./types";
 
-export function ProjectDetail({ projectId, view }: { projectId: string; view: "overview" | "ingest" }) {
+export function ProjectDetail({ projectId, view }: { projectId: string; view: "overview" | "ingest" | "ingest-new" }) {
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -59,7 +60,7 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
               <Home className="h-4 w-4" />
               Overview
             </SidebarMenuButton>
-            <SidebarMenuButton href={`/admin/projects/${projectId}/ingest`} isActive={view === "ingest"}>
+            <SidebarMenuButton href={`/admin/projects/${projectId}/ingest`} isActive={view === "ingest" || view === "ingest-new"}>
               <FileUp className="h-4 w-4" />
               Ingest
             </SidebarMenuButton>
@@ -87,7 +88,7 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
             <Button asChild variant={view === "overview" ? "default" : "outline"} size="sm">
               <Link href={`/admin/projects/${projectId}`}>Overview</Link>
             </Button>
-            <Button asChild variant={view === "ingest" ? "default" : "outline"} size="sm">
+            <Button asChild variant={view === "ingest" || view === "ingest-new" ? "default" : "outline"} size="sm">
               <Link href={`/admin/projects/${projectId}/ingest`}>Ingest</Link>
             </Button>
           </div>
@@ -101,7 +102,13 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
             </Alert>
           ) : null}
 
-          {view === "overview" ? <ProjectOverview project={project} isLoading={isLoading} projectId={projectId} /> : <ProjectIngest projectId={projectId} onIngested={loadProject} />}
+          {view === "overview" ? (
+            <ProjectOverview project={project} isLoading={isLoading} projectId={projectId} />
+          ) : view === "ingest-new" ? (
+            <ProjectIngestNew projectId={projectId} onCreated={loadProject} />
+          ) : (
+            <ProjectIngest projectId={projectId} onIngested={loadProject} />
+          )}
         </div>
       </SidebarInset>
     </SidebarProvider>

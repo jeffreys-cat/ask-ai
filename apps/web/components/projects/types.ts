@@ -15,3 +15,18 @@ export interface IngestResult {
   chunkCount?: number;
   error?: string;
 }
+
+export interface IngestTask {
+  id: string;
+  status: string;
+  fileCount: number;
+  processedCount: number;
+  queuedCount: number;
+  runningCount: number;
+  completedCount: number;
+  failedCount: number;
+  chunkCount: number;
+  createdAt: string;
+  updatedAt: string;
+  files: IngestResult[];
+}

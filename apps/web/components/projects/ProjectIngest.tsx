@@ -1,138 +1,116 @@
 "use client";
 
-import { FileUp, Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { Loader2, Plus, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { IngestResult } from "./types";
+import type { IngestTask } from "./types";
 
 export function ProjectIngest({ projectId, onIngested }: { projectId: string; onIngested?: () => void | Promise<void> }) {
-  const [files, setFiles] = useState<File[]>([]);
-  const [results, setResults] = useState<IngestResult[]>([]);
-  const [status, setStatus] = useState("Ready");
+  const [tasks, setTasks] = useState<IngestTask[]>([]);
   const [error, setError] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const markdownFiles = useMemo(() => files.filter((file) => /\.(md|mdx)$/i.test(relativePath(file))), [files]);
-  const ignoredCount = files.length - markdownFiles.length;
-  const canIngest = markdownFiles.length > 0 && !isBusy;
+  const hasActiveTask = tasks.some((task) => task.status === "queued" || task.status === "running");
 
-  async function ingestProject() {
-    setIsBusy(true);
-    setError("");
-    setResults([]);
-    setStatus(`Ingesting ${markdownFiles.length} Markdown files`);
-    try {
-      const form = new FormData();
-      for (const file of markdownFiles) {
-        form.append("files", file, relativePath(file));
+  const loadTasks = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!silent) setIsRefreshing(true);
+      try {
+        const response = await fetch(`/api/projects/${projectId}/ingest`, { cache: "no-store" });
+        if (!response.ok) throw new Error(await response.text());
+        const payload = (await response.json()) as { tasks: IngestTask[] };
+        setTasks(payload.tasks);
+        setError("");
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Failed to load ingest tasks");
+      } finally {
+        if (!silent) setIsRefreshing(false);
       }
+    },
+    [projectId],
+  );
 
-      const response = await fetch(`/api/projects/${projectId}/ingest`, {
-        method: "POST",
-        body: form,
-      });
-      if (!response.ok) throw new Error(await response.text());
-      const payload = (await response.json()) as {
-        fileCount: number;
-        completedCount: number;
-        failedCount: number;
-        results: IngestResult[];
-      };
-      setResults(payload.results);
-      setStatus(`Ingested ${payload.completedCount}/${payload.fileCount} files${payload.failedCount ? `, ${payload.failedCount} failed` : ""}`);
-      await onIngested?.();
-    } catch (ingestError) {
-      setError(ingestError instanceof Error ? ingestError.message : "Ingest failed");
-      setStatus("Ingest failed");
-    } finally {
-      setIsBusy(false);
-    }
-  }
+  useEffect(() => {
+    void loadTasks();
+  }, [loadTasks]);
+
+  useEffect(() => {
+    if (!hasActiveTask) return;
+    const timer = window.setInterval(() => {
+      void loadTasks({ silent: true });
+      void onIngested?.();
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [hasActiveTask, loadTasks, onIngested]);
 
   return (
     <div className="grid gap-4">
       {error ? (
         <Alert variant="destructive">
-          <AlertTitle>Ingest failed</AlertTitle>
+          <AlertTitle>Ingest error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Ingest Markdown project</CardTitle>
-          <CardDescription>Upload a docs directory or select Markdown/MDX files. Directory paths are preserved as source paths.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-5">
-          <div className="grid gap-2">
-            <Label htmlFor="project-directory">Project directory</Label>
-            <Input
-              id="project-directory"
-              type="file"
-              multiple
-              // @ts-expect-error webkitdirectory is supported by Chromium/WebKit for folder uploads.
-              webkitdirectory=""
-              accept=".md,.mdx,text/markdown,text/mdx"
-              onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-            />
+        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>Ingest tasks</CardTitle>
+            <CardDescription>Create Markdown ingest jobs and track background progress.</CardDescription>
           </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="markdown-files">Markdown files</Label>
-            <Input
-              id="markdown-files"
-              type="file"
-              multiple
-              accept=".md,.mdx,text/markdown,text/mdx"
-              onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-            />
-          </div>
-
-          <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <span>{markdownFiles.length} Markdown/MDX files selected</span>
-            {ignoredCount > 0 ? <span>{ignoredCount} non-Markdown files ignored</span> : null}
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">{status}</p>
-            <Button onClick={ingestProject} disabled={!canIngest}>
-              {isBusy ? <Loader2 className="animate-spin" /> : <FileUp />}
-              Upload and ingest
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => loadTasks()} disabled={isRefreshing}>
+              {isRefreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              Refresh
+            </Button>
+            <Button asChild>
+              <Link href={`/admin/projects/${projectId}/ingest/new`}>
+                <Plus />
+                New
+              </Link>
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent ingestion</CardTitle>
-          <CardDescription>Results are shown for the latest upload in this browser session.</CardDescription>
         </CardHeader>
         <CardContent>
-          {results.length === 0 ? (
-            <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">Upload Markdown files to see per-file ingestion results.</p>
+          {tasks.length === 0 ? (
+            <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No ingest tasks yet.</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Source path</TableHead>
+                  <TableHead>Created</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Progress</TableHead>
+                  <TableHead>Files</TableHead>
                   <TableHead>Chunks</TableHead>
-                  <TableHead>Error</TableHead>
+                  <TableHead>Errors</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {results.map((result) => (
-                  <TableRow key={`${result.ingestionId}:${result.sourcePath}`}>
-                    <TableCell className="max-w-md break-all font-medium">{result.sourcePath}</TableCell>
-                    <TableCell>{result.status}</TableCell>
-                    <TableCell>{result.chunkCount ?? "-"}</TableCell>
-                    <TableCell className="max-w-md break-words text-destructive">{result.error ? summarizeError(result.error) : "-"}</TableCell>
+                {tasks.map((task) => (
+                  <TableRow key={task.id}>
+                    <TableCell className="whitespace-nowrap">{formatDate(task.createdAt)}</TableCell>
+                    <TableCell>
+                      <TaskStatusBadge status={task.status} />
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">files {task.processedCount}/{task.fileCount}</TableCell>
+                    <TableCell className="min-w-72">
+                      <div className="max-h-28 overflow-auto text-xs text-muted-foreground">
+                        {task.files.map((file) => (
+                          <div key={file.ingestionId} className="flex gap-2 py-0.5">
+                            <span className="w-20 shrink-0">{file.status}</span>
+                            <span className="break-all">{file.sourcePath}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell>{task.chunkCount}</TableCell>
+                    <TableCell className="max-w-xs break-words text-destructive">{task.failedCount > 0 ? summarizeTaskErrors(task) : "-"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -144,8 +122,25 @@ export function ProjectIngest({ projectId, onIngested }: { projectId: string; on
   );
 }
 
-function relativePath(file: File) {
-  return ((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name).replace(/\\/g, "/");
+function TaskStatusBadge({ status }: { status: string }) {
+  const variant = status === "failed" || status === "completed_with_errors" ? "destructive" : status === "completed" ? "default" : "secondary";
+  return <Badge variant={variant}>{status}</Badge>;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function summarizeTaskErrors(task: IngestTask) {
+  const failedFile = task.files.find((file) => file.error);
+  if (!failedFile?.error) return `${task.failedCount} failed`;
+  const summary = summarizeError(failedFile.error);
+  return task.failedCount > 1 ? `${summary} (${task.failedCount} failed)` : summary;
 }
 
 function summarizeError(error: string) {
