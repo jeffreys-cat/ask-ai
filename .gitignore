@@ -8,3 +8,4 @@ node_modules
 coverage
 ask-ai-page.png
 *.tsbuildinfo
+.data

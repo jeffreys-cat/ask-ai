@@ -10,7 +10,8 @@
     "db:push": "tsx scripts/db-push.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "doris:init": "tsx scripts/doris-init.ts",
-    "seed:dev": "tsx scripts/seed-dev.ts"
+    "seed:dev": "tsx scripts/seed-dev.ts",
+    "worker:ingest": "pnpm --filter @selectdb/jobs worker:ingest"
   },
   "devDependencies": {
     "@types/node": "^22.19.17",

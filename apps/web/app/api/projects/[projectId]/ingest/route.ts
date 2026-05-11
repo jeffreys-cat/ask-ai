@@ -1,23 +1,13 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createDocumentsRepo, createIngestionRepo, createProjectsRepo } from "@selectdb/db";
-import type { DbClient } from "@selectdb/db";
-import type { DorisPool } from "@selectdb/doris";
-import { ingestDocument } from "@selectdb/jobs";
+import { createIngestSourceStorage } from "@selectdb/jobs";
 import { createLogger, serializeError } from "@selectdb/logger";
 import { BadRequestError } from "@selectdb/shared";
 import { getRequestContext } from "../../../../../lib/auth";
-import { getDb, getDoris } from "../../../../../lib/runtime";
+import { getDb } from "../../../../../lib/runtime";
 
 interface RouteContext {
   params: Promise<{ projectId: string }>;
-}
-
-interface QueuedProjectFile {
-  sourcePath: string;
-  documentId: string;
-  ingestionId: string;
-  content: string;
-  mimeType: string;
 }
 
 export async function GET(request: Request, context: RouteContext) {
@@ -47,10 +37,10 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     const ctx = getRequestContext(request.headers);
     const db = getDb();
-    const doris = getDoris();
     const projectsRepo = createProjectsRepo(db);
     const documentsRepo = createDocumentsRepo(db);
     const ingestionRepo = createIngestionRepo(db);
+    const sourceStorage = createIngestSourceStorage();
     const project = await projectsRepo.findById(ctx.organizationId, projectId);
     if (!project) throw new BadRequestError("project not found");
 
@@ -74,11 +64,12 @@ export async function POST(request: Request, context: RouteContext) {
         .filter(([sourcePath]) => sourcePath.length > 0),
     );
 
-    const queuedFiles: QueuedProjectFile[] = [];
+    let queuedCount = 0;
 
     for (const file of files) {
       const sourcePath = normalizeSourcePath(file.name);
       const mimeType = mimeTypeForPath(sourcePath);
+      const ingestionId = crypto.randomUUID();
       const existing = existingByPath.get(sourcePath);
       const document =
         existing ??
@@ -94,109 +85,50 @@ export async function POST(request: Request, context: RouteContext) {
         }));
       if (!document) throw new Error(`Failed to create document for ${sourcePath}`);
 
-      const job = await ingestionRepo.create({
-        id: crypto.randomUUID(),
+      const source = await sourceStorage.put({
         organizationId: ctx.organizationId,
-        documentId: document.id,
-        metadata: { projectId, taskId, sourcePath, mimeType },
-      });
-      if (!job) throw new Error(`Failed to create ingestion job for ${sourcePath}`);
-
-      queuedFiles.push({
-        sourcePath,
-        documentId: document.id,
-        ingestionId: job.id,
-        content: await file.text(),
-        mimeType,
-      });
-    }
-
-    after(async () => {
-      await runProjectIngestTask({
-        organizationId: ctx.organizationId,
-        projectId,
         taskId,
-        files: queuedFiles,
-        db,
-        doris,
+        ingestionId,
+        filename: sourcePath,
+        content: await file.text(),
       });
-    });
+
+      const job = await ingestionRepo
+        .create({
+          id: ingestionId,
+          organizationId: ctx.organizationId,
+          documentId: document.id,
+          metadata: {
+            projectId,
+            taskId,
+            sourcePath,
+            sourceUri: source.sourceUri,
+            mimeType,
+            size: source.size,
+            checksum: source.checksum,
+          },
+        })
+        .catch(async (error) => {
+          await sourceStorage.delete(source.sourceUri);
+          throw error;
+        });
+      if (!job) {
+        await sourceStorage.delete(source.sourceUri);
+        throw new Error(`Failed to create ingestion job for ${sourcePath}`);
+      }
+      queuedCount += 1;
+    }
 
     return NextResponse.json({
       projectId,
       taskId,
       status: "queued",
-      fileCount: queuedFiles.length,
+      fileCount: queuedCount,
     });
   } catch (error) {
     log.error("project ingestion request failed", { error: serializeError(error) });
     return errorResponse(error);
   }
-}
-
-async function runProjectIngestTask(input: {
-  organizationId: string;
-  projectId: string;
-  taskId: string;
-  files: QueuedProjectFile[];
-  db: DbClient;
-  doris: DorisPool;
-}) {
-  const log = createLogger({ component: "web.api.projects.ingest.worker", projectId: input.projectId, taskId: input.taskId });
-  const projectsRepo = createProjectsRepo(input.db);
-  let failed = 0;
-
-  for (const file of input.files) {
-    const fileStartedAt = Date.now();
-    log.info("project file ingestion started", {
-      organizationId: input.organizationId,
-      sourcePath: file.sourcePath,
-      documentId: file.documentId,
-      ingestionId: file.ingestionId,
-      mimeType: file.mimeType,
-    });
-
-    try {
-      const result = await ingestDocument({
-        organizationId: input.organizationId,
-        documentId: file.documentId,
-        ingestionId: file.ingestionId,
-        content: file.content,
-        mimeType: file.mimeType,
-        title: titleFromSourcePath(file.sourcePath),
-        sourceUri: file.sourcePath,
-        metadata: { projectId: input.projectId, sourcePath: file.sourcePath, sourceKind: "project_file" },
-        db: input.db,
-        doris: input.doris,
-      });
-      log.info("project file ingestion completed", {
-        organizationId: input.organizationId,
-        sourcePath: file.sourcePath,
-        documentId: file.documentId,
-        ingestionId: file.ingestionId,
-        chunkCount: result.chunkCount,
-        durationMs: Date.now() - fileStartedAt,
-      });
-    } catch (error) {
-      failed += 1;
-      log.error("project file ingestion failed", {
-        organizationId: input.organizationId,
-        sourcePath: file.sourcePath,
-        documentId: file.documentId,
-        ingestionId: file.ingestionId,
-        durationMs: Date.now() - fileStartedAt,
-        error: serializeError(error),
-      });
-    }
-  }
-
-  await projectsRepo.updateStatus(input.organizationId, input.projectId, failed === input.files.length ? "failed" : "ready");
-  log.info("project ingestion task completed", {
-    organizationId: input.organizationId,
-    fileCount: input.files.length,
-    completedCount: input.files.length - failed,
-    failedCount: failed,
-  });
 }
 
 function buildIngestTasks(

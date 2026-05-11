@@ -9,14 +9,16 @@
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "worker:ingest": "tsx src/worker.ts"
   },
   "dependencies": {
     "@selectdb/db": "workspace:*",
     "@selectdb/doris": "workspace:*",
     "@selectdb/logger": "workspace:*",
     "@selectdb/rag": "workspace:*",
-    "@selectdb/shared": "workspace:*"
+    "@selectdb/shared": "workspace:*",
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

@@ -2,15 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileUp, Home, Loader2 } from "lucide-react";
+import { ArrowLeft, FileUp, Home } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarProvider } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ProjectStatusBadge } from "./status";
 import { ProjectIngest } from "./ProjectIngest";
 import { ProjectIngestNew } from "./ProjectIngestNew";
 import type { ProjectSummary } from "./types";
@@ -24,18 +22,21 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
     void loadProject();
   }, [projectId]);
 
-  async function loadProject() {
-    setIsLoading(true);
-    setError("");
+  async function loadProject({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) {
+      setIsLoading(true);
+      setError("");
+    }
     try {
       const response = await fetch(`/api/projects/${projectId}`);
       if (!response.ok) throw new Error(await response.text());
       const payload = (await response.json()) as { project: ProjectSummary };
       setProject(payload.project);
+      setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load project");
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }
 
@@ -70,17 +71,10 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
 
       <SidebarInset>
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-8">
-          <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <header>
             <div className="min-w-0">
               {isLoading ? <Skeleton className="h-8 w-64" /> : <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>}
               <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              {project ? <ProjectStatusBadge status={project.status} /> : <Badge variant="secondary">loading</Badge>}
-              <Button variant="outline" size="sm" onClick={loadProject} disabled={isLoading}>
-                {isLoading ? <Loader2 className="animate-spin" /> : null}
-                Refresh
-              </Button>
             </div>
           </header>
 
@@ -107,7 +101,7 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
           ) : view === "ingest-new" ? (
             <ProjectIngestNew projectId={projectId} onCreated={loadProject} />
           ) : (
-            <ProjectIngest projectId={projectId} onIngested={loadProject} />
+            <ProjectIngest projectId={projectId} onIngested={() => loadProject({ silent: true })} />
           )}
         </div>
       </SidebarInset>

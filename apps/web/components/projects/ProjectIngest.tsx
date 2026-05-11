@@ -2,20 +2,27 @@
 
 import Link from "next/link";
 import { Loader2, Plus, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { IngestTask } from "./types";
 
+const TASKS_PER_PAGE = 10;
+
 export function ProjectIngest({ projectId, onIngested }: { projectId: string; onIngested?: () => void | Promise<void> }) {
   const [tasks, setTasks] = useState<IngestTask[]>([]);
+  const [page, setPage] = useState(1);
   const [error, setError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const lastHadActiveTaskRef = useRef(false);
 
   const hasActiveTask = tasks.some((task) => task.status === "queued" || task.status === "running");
+  const pageCount = Math.max(1, Math.ceil(tasks.length / TASKS_PER_PAGE));
+  const visibleTasks = tasks.slice((page - 1) * TASKS_PER_PAGE, page * TASKS_PER_PAGE);
 
   const loadTasks = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -26,8 +33,10 @@ export function ProjectIngest({ projectId, onIngested }: { projectId: string; on
         const payload = (await response.json()) as { tasks: IngestTask[] };
         setTasks(payload.tasks);
         setError("");
+        return payload.tasks;
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load ingest tasks");
+        return null;
       } finally {
         if (!silent) setIsRefreshing(false);
       }
@@ -36,14 +45,25 @@ export function ProjectIngest({ projectId, onIngested }: { projectId: string; on
   );
 
   useEffect(() => {
-    void loadTasks();
+    void loadTasks().then((nextTasks) => {
+      if (nextTasks) lastHadActiveTaskRef.current = hasActiveTasks(nextTasks);
+    });
   }, [loadTasks]);
+
+  useEffect(() => {
+    setPage((currentPage) => Math.min(currentPage, pageCount));
+  }, [pageCount]);
 
   useEffect(() => {
     if (!hasActiveTask) return;
     const timer = window.setInterval(() => {
-      void loadTasks({ silent: true });
-      void onIngested?.();
+      void loadTasks({ silent: true }).then((nextTasks) => {
+        if (!nextTasks) return;
+        const nextHasActiveTask = hasActiveTasks(nextTasks);
+        const completedActiveTask = lastHadActiveTaskRef.current && !nextHasActiveTask;
+        lastHadActiveTaskRef.current = nextHasActiveTask;
+        if (completedActiveTask) void onIngested?.();
+      });
     }, 2500);
     return () => window.clearInterval(timer);
   }, [hasActiveTask, loadTasks, onIngested]);
@@ -92,7 +112,7 @@ export function ProjectIngest({ projectId, onIngested }: { projectId: string; on
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tasks.map((task) => (
+                {visibleTasks.map((task) => (
                   <TableRow key={task.id}>
                     <TableCell className="whitespace-nowrap">{formatDate(task.createdAt)}</TableCell>
                     <TableCell>
@@ -117,9 +137,63 @@ export function ProjectIngest({ projectId, onIngested }: { projectId: string; on
             </Table>
           )}
         </CardContent>
+        {tasks.length > TASKS_PER_PAGE ? (
+          <CardFooter className="flex flex-col gap-3 sm:flex-row sm:justify-between">
+            <p className="text-sm text-muted-foreground">
+              Showing {(page - 1) * TASKS_PER_PAGE + 1}-{Math.min(page * TASKS_PER_PAGE, tasks.length)} of {tasks.length}
+            </p>
+            <TaskPagination page={page} pageCount={pageCount} onPageChange={setPage} />
+          </CardFooter>
+        ) : null}
       </Card>
     </div>
   );
+}
+
+function TaskPagination({ page, pageCount, onPageChange }: { page: number; pageCount: number; onPageChange: (page: number) => void }) {
+  const pages = paginationPages(page, pageCount);
+
+  return (
+    <Pagination className="mx-0 w-auto">
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationPrevious disabled={page === 1} onClick={() => onPageChange(Math.max(1, page - 1))} />
+        </PaginationItem>
+        {pages.map((item, index) => (
+          <PaginationItem key={`${item}-${index}`}>
+            {item === "ellipsis" ? (
+              <PaginationEllipsis />
+            ) : (
+              <PaginationLink isActive={item === page} onClick={() => onPageChange(item)}>
+                {item}
+              </PaginationLink>
+            )}
+          </PaginationItem>
+        ))}
+        <PaginationItem>
+          <PaginationNext disabled={page === pageCount} onClick={() => onPageChange(Math.min(pageCount, page + 1))} />
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
+  );
+}
+
+function paginationPages(page: number, pageCount: number) {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
+
+  const pages: Array<number | "ellipsis"> = [1];
+  const start = Math.max(2, page - 1);
+  const end = Math.min(pageCount - 1, page + 1);
+
+  if (start > 2) pages.push("ellipsis");
+  for (let nextPage = start; nextPage <= end; nextPage += 1) pages.push(nextPage);
+  if (end < pageCount - 1) pages.push("ellipsis");
+  pages.push(pageCount);
+  return pages;
+}
+
+function hasActiveTasks(tasks: IngestTask[]) {
+  return tasks.some((task) => task.status === "queued" || task.status === "running");
 }
 
 function TaskStatusBadge({ status }: { status: string }) {
