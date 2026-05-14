@@ -3,6 +3,7 @@ import { createDocumentsRepo, createIngestionRepo, createProjectsRepo } from "@s
 import { createIngestSourceStorage } from "@selectdb/jobs";
 import { createLogger, serializeError } from "@selectdb/logger";
 import { BadRequestError } from "@selectdb/shared";
+import { discoverSitemapUrls } from "@selectdb/web-crawler";
 import { getRequestContext } from "../../../../../lib/auth";
 import { getDb } from "../../../../../lib/runtime";
 
@@ -43,6 +44,18 @@ export async function POST(request: Request, context: RouteContext) {
     const sourceStorage = createIngestSourceStorage();
     const project = await projectsRepo.findById(ctx.organizationId, projectId);
     if (!project) throw new BadRequestError("project not found");
+
+    if (isJsonRequest(request)) {
+      return createUrlIngestTask(request, {
+        organizationId: ctx.organizationId,
+        userId: ctx.userId,
+        projectId,
+        projectsRepo,
+        documentsRepo,
+        ingestionRepo,
+        log,
+      });
+    }
 
     const form = await request.formData();
     const files = form.getAll("files").filter((file): file is File => file instanceof File && isMarkdownFile(file.name));
@@ -129,6 +142,102 @@ export async function POST(request: Request, context: RouteContext) {
     log.error("project ingestion request failed", { error: serializeError(error) });
     return errorResponse(error);
   }
+}
+
+async function createUrlIngestTask(
+  request: Request,
+  input: {
+    organizationId: string;
+    userId: string;
+    projectId: string;
+    projectsRepo: ReturnType<typeof createProjectsRepo>;
+    documentsRepo: ReturnType<typeof createDocumentsRepo>;
+    ingestionRepo: ReturnType<typeof createIngestionRepo>;
+    log: ReturnType<typeof createLogger>;
+  },
+) {
+  const payload = (await request.json()) as { source?: unknown; url?: unknown };
+  if (payload.source !== "url") throw new BadRequestError("unsupported ingest source");
+  if (typeof payload.url !== "string" || payload.url.trim().length === 0) throw new BadRequestError("url is required");
+
+  const pages = await discoverSitemapUrls(payload.url.trim());
+  if (pages.length === 0) throw new BadRequestError("no sitemap URLs found");
+
+  const taskId = crypto.randomUUID();
+  input.log.info("project URL ingestion task created", {
+    organizationId: input.organizationId,
+    userId: input.userId,
+    taskId,
+    url: payload.url,
+    pageCount: pages.length,
+  });
+
+  await input.projectsRepo.updateStatus(input.organizationId, input.projectId, "ingesting");
+  const existingDocuments = await input.documentsRepo.listByProject(input.organizationId, input.projectId);
+  const existingByUrl = new Map(
+    existingDocuments
+      .map((document) => {
+        const metadata = document.metadata as Record<string, unknown>;
+        const url = typeof metadata.url === "string" ? metadata.url : typeof metadata.sourceUri === "string" ? metadata.sourceUri : "";
+        return [url, document] as const;
+      })
+      .filter(([url]) => url.length > 0),
+  );
+
+  let queuedCount = 0;
+  for (const page of pages) {
+    const ingestionId = crypto.randomUUID();
+    const sourcePath = page.url;
+    const existing = existingByUrl.get(page.url);
+    const document =
+      existing ??
+      (await input.documentsRepo.create({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        title: titleFromUrl(page.url),
+        sourceType: "url",
+        mimeType: "text/html",
+        metadata: {
+          projectId: input.projectId,
+          taskId,
+          sourcePath,
+          sourceUri: page.url,
+          sourceKind: "web_url",
+          url: page.url,
+          sitemapUrl: page.sitemapUrl,
+          lastmod: page.lastmod,
+        },
+        createdBy: input.userId,
+      }));
+    if (!document) throw new Error(`Failed to create document for ${page.url}`);
+
+    const job = await input.ingestionRepo.create({
+      id: ingestionId,
+      organizationId: input.organizationId,
+      documentId: document.id,
+      metadata: {
+        projectId: input.projectId,
+        taskId,
+        sourcePath,
+        sourceUri: page.url,
+        sourceKind: "web_url",
+        mimeType: "text/html",
+        url: page.url,
+        sitemapUrl: page.sitemapUrl,
+        lastmod: page.lastmod,
+      },
+    });
+    if (!job) throw new Error(`Failed to create ingestion job for ${page.url}`);
+    queuedCount += 1;
+  }
+
+  return NextResponse.json({
+    projectId: input.projectId,
+    taskId,
+    status: "queued",
+    fileCount: queuedCount,
+  });
 }
 
 function buildIngestTasks(
@@ -237,6 +346,16 @@ function titleFromSourcePath(path: string) {
 
 function mimeTypeForPath(path: string) {
   return path.toLowerCase().endsWith(".mdx") ? "text/mdx" : "text/markdown";
+}
+
+function titleFromUrl(rawUrl: string) {
+  const url = new URL(rawUrl);
+  const path = url.pathname.replace(/\/$/, "");
+  return decodeURIComponent(path.split("/").pop() || url.hostname);
+}
+
+function isJsonRequest(request: Request) {
+  return request.headers.get("content-type")?.includes("application/json") ?? false;
 }
 
 function errorResponse(error: unknown) {

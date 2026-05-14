@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, FileUp, Loader2 } from "lucide-react";
+import { ArrowLeft, FileUp, Globe2, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,37 +10,40 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-type IngestSource = "folder" | "markdown";
+type IngestSource = "folder" | "markdown" | "url";
 
 export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; onCreated?: () => void | Promise<void> }) {
   const router = useRouter();
   const [source, setSource] = useState<IngestSource>("folder");
   const [files, setFiles] = useState<File[]>([]);
+  const [url, setUrl] = useState("");
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
   const markdownFiles = useMemo(() => files.filter((file) => /\.(md|mdx)$/i.test(relativePath(file))), [files]);
   const ignoredCount = files.length - markdownFiles.length;
-  const canCreate = markdownFiles.length > 0 && !isCreating;
+  const canCreate = (source === "url" ? url.trim().length > 0 : markdownFiles.length > 0) && !isCreating;
 
   async function createIngestTask() {
     setIsCreating(true);
     setError("");
-    setStatus(`Creating ingest task for ${markdownFiles.length} Markdown files`);
+    setStatus(source === "url" ? "Discovering sitemap URLs" : `Creating ingest task for ${markdownFiles.length} Markdown files`);
     try {
-      const form = new FormData();
-      for (const file of markdownFiles) {
-        form.append("files", file, relativePath(file));
-      }
-
-      const response = await fetch(`/api/projects/${projectId}/ingest`, {
-        method: "POST",
-        body: form,
-      });
+      const response =
+        source === "url"
+          ? await fetch(`/api/projects/${projectId}/ingest`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ source: "url", url: url.trim() }),
+            })
+          : await fetch(`/api/projects/${projectId}/ingest`, {
+              method: "POST",
+              body: filesForm(markdownFiles),
+            });
       if (!response.ok) throw new Error(await response.text());
       const payload = (await response.json()) as { fileCount: number };
-      setStatus(`Ingest task created: ${payload.fileCount} files queued`);
+      setStatus(`Ingest task created: ${payload.fileCount} ${source === "url" ? "pages" : "files"} queued`);
       await onCreated?.();
       router.push(`/admin/projects/${projectId}/ingest`);
       router.refresh();
@@ -55,6 +58,7 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
   function selectSource(nextSource: IngestSource) {
     setSource(nextSource);
     setFiles([]);
+    setUrl("");
     setStatus("Ready");
     setError("");
   }
@@ -72,7 +76,7 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
         <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle>New ingest task</CardTitle>
-            <CardDescription>Create a background task from a project folder or selected Markdown files.</CardDescription>
+            <CardDescription>Create a background task from a project folder, selected Markdown files, or a sitemap URL.</CardDescription>
           </div>
           <Button asChild variant="outline">
             <Link href={`/admin/projects/${projectId}/ingest`}>
@@ -84,7 +88,7 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
         <CardContent className="grid gap-6">
           <fieldset className="grid gap-3">
             <legend className="text-sm font-medium">Source</legend>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-3">
               <label className="flex cursor-pointer gap-3 rounded-lg border p-4 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5">
                 <input
                   type="radio"
@@ -113,6 +117,20 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
                   <span className="text-sm text-muted-foreground">Select one or more Markdown/MDX files directly.</span>
                 </span>
               </label>
+              <label className="flex cursor-pointer gap-3 rounded-lg border p-4 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                <input
+                  type="radio"
+                  name="ingest-source"
+                  value="url"
+                  checked={source === "url"}
+                  onChange={() => selectSource("url")}
+                  className="mt-1"
+                />
+                <span className="grid gap-1">
+                  <span className="font-medium">URL / Sitemap</span>
+                  <span className="text-sm text-muted-foreground">Enter a docs URL and queue pages from its sitemap.</span>
+                </span>
+              </label>
             </div>
           </fieldset>
 
@@ -130,7 +148,7 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
                 onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
               />
             </div>
-          ) : (
+          ) : source === "markdown" ? (
             <div className="grid gap-2">
               <Label htmlFor="markdown-files">Markdown file</Label>
               <Input
@@ -142,17 +160,39 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
                 onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
               />
             </div>
+          ) : (
+            <div className="grid gap-2">
+              <Label htmlFor="sitemap-url">URL / Sitemap</Label>
+              <Input
+                key="sitemap-url"
+                id="sitemap-url"
+                type="url"
+                inputMode="url"
+                placeholder="https://docs.example.com"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+              />
+            </div>
           )}
 
           <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <span>{markdownFiles.length} Markdown/MDX files selected</span>
-            {ignoredCount > 0 ? <span>{ignoredCount} non-Markdown files ignored</span> : null}
+            {source === "url" ? (
+              <>
+                <span>{url.trim() ? "Sitemap discovery will run before queueing pages" : "Enter a URL to discover sitemap pages"}</span>
+                <span>Up to 100 pages</span>
+              </>
+            ) : (
+              <>
+                <span>{markdownFiles.length} Markdown/MDX files selected</span>
+                {ignoredCount > 0 ? <span>{ignoredCount} non-Markdown files ignored</span> : null}
+              </>
+            )}
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted-foreground">{status}</p>
             <Button onClick={createIngestTask} disabled={!canCreate}>
-              {isCreating ? <Loader2 className="animate-spin" /> : <FileUp />}
+              {isCreating ? <Loader2 className="animate-spin" /> : source === "url" ? <Globe2 /> : <FileUp />}
               Create task
             </Button>
           </div>
@@ -164,4 +204,12 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
 
 function relativePath(file: File) {
   return ((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name).replace(/\\/g, "/");
+}
+
+function filesForm(files: File[]) {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file, relativePath(file));
+  }
+  return form;
 }
