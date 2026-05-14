@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createDb, createIngestionRepo, createProjectsRepo } from "@selectdb/db";
 import { createDorisPool } from "@selectdb/doris";
 import { createLogger, serializeError } from "@selectdb/logger";
+import { fetchWebDocument } from "@selectdb/web-crawler";
 import { ingestDocument } from "./ingest-document";
 import { loadRootEnv } from "./load-env";
 import { createIngestSourceStorage } from "./source-storage";
@@ -79,6 +80,7 @@ async function processJob(input: {
   const taskId = stringMetadata(metadata, "taskId");
   const sourcePath = stringMetadata(metadata, "sourcePath");
   const sourceUri = stringMetadata(metadata, "sourceUri");
+  const sourceKind = stringMetadata(metadata, "sourceKind");
   const mimeType = stringMetadata(metadata, "mimeType") ?? "text/markdown";
   const jobLog = log.child({
     organizationId: job.organizationId,
@@ -102,22 +104,29 @@ async function processJob(input: {
     if (!sourceUri) throw new Error("Ingestion job is missing metadata.sourceUri");
 
     jobLog.info("ingest job started");
-    const content = await input.sourceStorage.get(sourceUri);
+    const source =
+      sourceKind === "web_url"
+        ? await fetchWebDocument(sourceUri)
+        : {
+            content: await input.sourceStorage.get(sourceUri),
+            mimeType,
+            finalUrl: sourcePath,
+          };
     const result = await ingestDocument({
       organizationId: job.organizationId,
       documentId: job.documentId,
       ingestionId: job.id,
-      content,
-      mimeType,
+      content: source.content,
+      mimeType: sourceKind === "web_url" ? source.mimeType : mimeType,
       title: titleFromSourcePath(sourcePath),
-      sourceUri: sourcePath,
-      metadata: { projectId, sourcePath, sourceKind: "project_file" },
+      sourceUri: sourceKind === "web_url" ? source.finalUrl : sourcePath,
+      metadata: { projectId, sourcePath, sourceKind: sourceKind === "web_url" ? "web_url" : "project_file" },
       db: input.db,
       doris: input.doris,
     });
 
     await input.ingestionRepo.complete({ ingestionId: job.id, workerId: input.workerId, chunkCount: result.chunkCount });
-    await deleteSource(input.sourceStorage, sourceUri, jobLog);
+    if (sourceKind !== "web_url") await deleteSource(input.sourceStorage, sourceUri, jobLog);
     await refreshProjectStatus(input.ingestionRepo, input.projectsRepo, job.organizationId, projectId, taskId);
     jobLog.info("ingest job completed", { chunkCount: result.chunkCount });
   } catch (error) {

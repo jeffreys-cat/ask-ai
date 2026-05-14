@@ -1,3 +1,4 @@
+import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
 import { createAskRepo, createDocumentsRepo, createProjectsRepo } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
 import { runAskDocsWorkflow } from "@selectdb/ai";
@@ -7,19 +8,19 @@ import { getRequestContext } from "../../../lib/auth";
 import { getDb, getDoris } from "../../../lib/runtime";
 
 export async function POST(request: Request) {
-  const encoder = new TextEncoder();
-
   try {
     const ctx = getRequestContext(request.headers);
     const body = (await request.json()) as {
+      messages?: UIMessage[];
       question?: string;
       projectId?: string;
       documentIds?: string[];
       topK?: number;
       includeDebugChunks?: boolean;
     };
+    const question = body.question?.trim() || getLatestUserText(body.messages);
 
-    if (!body.question?.trim()) throw new BadRequestError("question is required");
+    if (!question) throw new BadRequestError("question is required");
 
     const db = getDb();
     const documentIds = await resolveDocumentIds({
@@ -34,22 +35,23 @@ export async function POST(request: Request) {
       id: sessionId,
       organizationId: ctx.organizationId,
       userId: ctx.userId,
-      question: body.question.trim(),
+      question,
       metadata: { projectId: body.projectId, documentIds, topK: body.topK },
     });
 
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
+    const stream = createUIMessageStream({
+      originalMessages: body.messages,
+      execute: async ({ writer }) => {
         let finalAnswer = "";
         let finalCitations: Extract<AskStreamEvent, { type: "citations" }>["citations"] = [];
+        const textId = crypto.randomUUID();
 
-        const emit = (event: AskStreamEvent) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-        };
+        writer.write({ type: "data-status", data: { label: "Retrieving context" }, transient: true });
+        writer.write({ type: "text-start", id: textId });
 
         for await (const event of runAskDocsWorkflow({
           organizationId: ctx.organizationId,
-          question: body.question!.trim(),
+          question,
           retriever: {
             search: (input) => createChunkStore(getDoris()).searchChunks(input),
           },
@@ -58,32 +60,52 @@ export async function POST(request: Request) {
           topK: body.topK,
           includeDebugChunks: body.includeDebugChunks,
         })) {
-          if (event.type === "done") finalAnswer = event.answer;
-          if (event.type === "citations") finalCitations = event.citations;
-          emit(event);
+          if (event.type === "answer_delta") {
+            writer.write({ type: "data-status", data: { label: "Answering" }, transient: true });
+            writer.write({ type: "text-delta", id: textId, delta: event.delta });
+          }
+          if (event.type === "retrieved_chunks") {
+            writer.write({ type: "data-retrieved_chunks", data: event.chunks });
+          }
+          if (event.type === "citations") {
+            finalCitations = event.citations;
+            writer.write({ type: "data-citations", data: event.citations });
+          }
+          if (event.type === "done") {
+            finalAnswer = event.answer;
+            writer.write({ type: "data-status", data: { label: "Done" }, transient: true });
+          }
+          if (event.type === "error") {
+            writer.write({ type: "error", errorText: event.message });
+          }
         }
+
+        writer.write({ type: "text-end", id: textId });
 
         if (finalAnswer) {
           await askRepo.completeSession({ sessionId, answer: finalAnswer, citations: finalCitations });
         }
-        controller.close();
       },
     });
 
-    return new Response(stream, {
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache, no-transform",
-        connection: "keep-alive",
-      },
-    });
+    return createUIMessageStreamResponse({ stream });
   } catch (error) {
-    const event: AskStreamEvent = { type: "error", message: error instanceof Error ? error.message : "Unknown error" };
-    return new Response(`data: ${JSON.stringify(event)}\n\n`, {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      {
       status: error instanceof BadRequestError ? error.status : 500,
-      headers: { "content-type": "text/event-stream; charset=utf-8" },
-    });
+      },
+    );
   }
+}
+
+function getLatestUserText(messages?: UIMessage[]) {
+  const message = [...(messages ?? [])].reverse().find((item) => item.role === "user");
+  return message?.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
 }
 
 async function resolveDocumentIds(input: {

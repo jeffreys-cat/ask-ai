@@ -18,6 +18,7 @@
     "@selectdb/logger": "workspace:*",
     "@selectdb/rag": "workspace:*",
     "@selectdb/shared": "workspace:*",
+    "@selectdb/web-crawler": "workspace:*",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
