@@ -12,7 +12,7 @@ export interface WebFetchLimits {
 }
 
 export const DEFAULT_WEB_CRAWL_LIMITS = {
-  maxPages: 100,
+  maxPages: 10000,
   maxDepth: 3,
   maxPageBytes: 5 * 1024 * 1024,
   maxTotalBytes: 100 * 1024 * 1024,

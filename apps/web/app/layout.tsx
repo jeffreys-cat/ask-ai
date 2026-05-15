@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
+import { Roboto } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import "./globals.css";
+
+const roboto = Roboto({
+  subsets: ["latin"],
+  variable: "--font-sans",
+});
 
 export const metadata: Metadata = {
   title: "Ask AI",
@@ -9,7 +16,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={cn("font-sans", roboto.variable)}>
       <body>
         <TooltipProvider>{children}</TooltipProvider>
       </body>
