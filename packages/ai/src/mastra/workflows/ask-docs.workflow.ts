@@ -1,4 +1,4 @@
-import type { AskStreamEvent, Citation, RetrievedChunk } from "@selectdb/shared";
+import type { AskAgentInput, AskStreamEvent, Citation, RetrievedChunk } from "@selectdb/shared";
 import { buildCitations, packContext, retrieveRelevantChunks, type EmbeddingProvider, type Retriever } from "@selectdb/rag";
 import { buildDocAnswerPrompt } from "../agents/doc-answer.agent";
 import { chatConfigFromEnv, streamOpenAICompatibleAnswer, type ChatStreamConfig } from "../../streaming/answer-stream";
@@ -11,6 +11,7 @@ export interface AskDocsWorkflowInput {
   documentIds?: string[];
   topK?: number;
   includeDebugChunks?: boolean;
+  agent?: AskAgentInput;
   chat?: ChatStreamConfig;
 }
 
@@ -38,6 +39,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       question: input.question,
       context: packContext(chunks),
       citations,
+      agent: input.agent,
     });
 
     for await (const delta of streamOpenAICompatibleAnswer(input.chat ?? chatConfigFromEnv(), prompt)) {

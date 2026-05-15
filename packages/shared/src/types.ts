@@ -37,6 +37,19 @@ export interface Citation {
   sourceUri?: string;
 }
 
+export interface AskAgentInput {
+  id: string;
+  name: string;
+  instructions: string;
+}
+
+export const ASK_DOC_ANSWER_AGENT = {
+  id: "doc-answer-agent",
+  name: "Documentation answer agent",
+  instructions:
+    "Answer from retrieved organization-scoped document context. Be concise and cite sources with bracketed citation numbers.",
+} satisfies AskAgentInput;
+
 export type AskStreamEvent =
   | { type: "answer_delta"; delta: string }
   | { type: "retrieved_chunks"; chunks: RetrievedChunk[] }

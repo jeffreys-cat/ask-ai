@@ -12,19 +12,27 @@ import {
   MessageSquareText,
   PanelRightOpen,
   RefreshCw,
-  Send,
-  Square,
 } from "lucide-react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { useChat } from "@ai-sdk/react";
 import { useEffect, useMemo, useState } from "react";
-import type { Citation, RetrievedChunk } from "@selectdb/shared";
+import { ASK_DOC_ANSWER_AGENT, type Citation, type RetrievedChunk } from "@selectdb/shared";
+import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  PromptInput,
+  PromptInputFooter,
+  PromptInputProvider,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+  usePromptInputController,
+} from "@/components/ai-elements/prompt-input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 
 interface ProjectSummary {
   id: string;
@@ -46,7 +54,6 @@ const transport = new DefaultChatTransport<AskMessage>({ api: "/api/ask" });
 export function AskPanel() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [question, setQuestion] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
   const [chunks, setChunks] = useState<RetrievedChunk[]>([]);
   const [statusLabel, setStatusLabel] = useState("Loading projects");
@@ -72,7 +79,7 @@ export function AskPanel() {
   );
   const readyProjects = useMemo(() => projects.filter((project) => project.status === "ready"), [projects]);
   const isBusy = status === "submitted" || status === "streaming";
-  const canAsk = question.trim().length > 0 && selectedProject?.status === "ready" && !isBusy;
+  const canAsk = selectedProject?.status === "ready" && !isBusy;
   const activeAnswer = [...messages]
     .reverse()
     .find((message) => message.role === "assistant")
@@ -104,17 +111,16 @@ export function AskPanel() {
     }
   }
 
-  async function submitQuestion() {
-    const text = question.trim();
+  async function submitQuestion(text: string) {
     if (!text || !selectedProjectId) return;
     setCitations([]);
     setChunks([]);
     setStatusLabel("Submitting");
-    setQuestion("");
     await sendMessage(
       { text },
       {
         body: {
+          agentId: ASK_DOC_ANSWER_AGENT.id,
           projectId: selectedProjectId,
           topK: 8,
           includeDebugChunks: showContext,
@@ -162,7 +168,7 @@ export function AskPanel() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold">Ask AI</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">Vercel AI SDK stream</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{ASK_DOC_ANSWER_AGENT.name}</p>
                 </div>
                 <Button variant="outline" size="icon" onClick={loadProjects} disabled={isLoadingProjects || isBusy} aria-label="Refresh projects">
                   {isLoadingProjects ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
@@ -254,84 +260,51 @@ export function AskPanel() {
             </div>
           ) : null}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-            {messages.length === 0 ? (
-              <div className="grid min-h-[360px] place-items-center">
-                <div className="max-w-xl text-center">
-                  <div className="mx-auto grid size-14 place-items-center rounded-lg border bg-card shadow-sm">
-                    <Bot className="size-6 text-primary" />
+          <PromptInputProvider>
+            <Conversation>
+              {messages.length === 0 ? (
+                <ConversationEmptyState
+                  icon={<Bot className="size-6" />}
+                  title="Ask your indexed documentation"
+                  description="Select a ready project, ask a precise question, and citations will appear beside the streamed answer."
+                >
+                  <div className="max-w-xl">
+                    <div className="mx-auto mb-5 grid size-14 place-items-center rounded-lg border bg-card shadow-sm text-primary">
+                      <Bot className="size-6" />
+                    </div>
+                    <h3 className="text-2xl font-semibold tracking-tight">Ask your indexed documentation</h3>
+                    <p className="mt-3 text-sm leading-6 text-muted-foreground">Select a ready project, ask a precise question, and citations will appear beside the streamed answer.</p>
+                    <SuggestedQuestionGrid />
                   </div>
-                  <h3 className="mt-5 text-2xl font-semibold tracking-tight">Ask your indexed documentation</h3>
-                  <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                    Select a ready project, ask a precise question, and citations will appear beside the streamed answer.
-                  </p>
-                  <div className="mt-6 grid gap-2 text-left sm:grid-cols-2">
-                    {["Summarize the deployment steps.", "Which config keys are required?", "Where is authentication described?", "Compare the documented ingest modes."].map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => setQuestion(item)}
-                        className="rounded-md border bg-card px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="mx-auto grid max-w-3xl gap-4">
-                {messages.map((message) => (
-                  <ChatBubble key={message.id} message={message} />
-                ))}
-                {isBusy && !activeAnswer ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" />
-                    Preparing answer
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
+                </ConversationEmptyState>
+              ) : (
+                <ConversationContent className="max-w-3xl">
+                  {messages.map((message) => (
+                    <AskMessageView key={message.id} message={message} />
+                  ))}
+                  {isBusy && !activeAnswer ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      Preparing answer
+                    </div>
+                  ) : null}
+                </ConversationContent>
+              )}
+            </Conversation>
 
-          <footer className="shrink-0 border-t bg-card p-4">
-            <div className="mx-auto max-w-3xl">
-              <div className="rounded-lg border bg-background p-2 shadow-sm">
-                <Textarea
-                  className="min-h-24 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0"
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void submitQuestion();
-                  }}
-                  placeholder="Ask about configuration, APIs, setup steps, or anything in this project..."
+            <footer className="shrink-0 border-t bg-card p-4">
+              <div className="mx-auto max-w-3xl">
+                <AskPromptInput
+                  canAsk={canAsk}
+                  includeDebugChunks={showContext}
+                  onIncludeDebugChunksChange={setShowContext}
+                  onSubmit={submitQuestion}
+                  onStop={stop}
+                  status={status}
                 />
-                <div className="flex flex-col gap-3 border-t px-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      className="size-4 accent-primary"
-                      checked={showContext}
-                      onChange={(event) => setShowContext(event.target.checked)}
-                    />
-                    Stream retrieved chunks
-                  </label>
-                  <div className="flex items-center justify-end gap-2">
-                    {isBusy ? (
-                      <Button variant="outline" onClick={stop}>
-                        <Square className="size-4" />
-                        Stop
-                      </Button>
-                    ) : null}
-                    <Button disabled={!canAsk} onClick={submitQuestion}>
-                      {isBusy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                      Ask
-                    </Button>
-                  </div>
-                </div>
               </div>
-            </div>
-          </footer>
+            </footer>
+          </PromptInputProvider>
         </main>
 
         <aside className="hidden min-h-0 overflow-hidden border-l bg-muted/20 xl:block">
@@ -394,28 +367,79 @@ function StatusPill({ status, busy }: { status: string; busy: boolean }) {
   );
 }
 
-function ChatBubble({ message }: { message: AskMessage }) {
-  const isUser = message.role === "user";
+function SuggestedQuestionGrid() {
+  const { textInput } = usePromptInputController();
+
+  return (
+    <div className="mt-6 grid gap-2 text-left sm:grid-cols-2">
+      {["Summarize the deployment steps.", "Which config keys are required?", "Where is authentication described?", "Compare the documented ingest modes."].map((item) => (
+        <button
+          key={item}
+          type="button"
+          onClick={() => textInput.setInput(item)}
+          className="rounded-md border bg-card px-3 py-2 text-sm text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
+        >
+          {item}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AskPromptInput({
+  canAsk,
+  includeDebugChunks,
+  onIncludeDebugChunksChange,
+  onSubmit,
+  onStop,
+  status,
+}: {
+  canAsk: boolean;
+  includeDebugChunks: boolean;
+  onIncludeDebugChunksChange: (value: boolean) => void;
+  onSubmit: (text: string) => Promise<void>;
+  onStop: () => Promise<void>;
+  status: ReturnType<typeof useChat<AskMessage>>["status"];
+}) {
+  const { textInput } = usePromptInputController();
+  const hasText = textInput.value.trim().length > 0;
+  const isBusy = status === "submitted" || status === "streaming";
+
+  return (
+    <PromptInput onSubmit={({ text }) => onSubmit(text)}>
+      <PromptInputTextarea placeholder="Ask about configuration, APIs, setup steps, or anything in this project..." />
+      <PromptInputFooter>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={includeDebugChunks}
+            onChange={(event) => onIncludeDebugChunksChange(event.target.checked)}
+          />
+          Stream retrieved chunks
+        </label>
+        <PromptInputTools className="justify-end">
+          <PromptInputSubmit disabled={(!canAsk || !hasText) && !isBusy} onStop={onStop} status={status}>
+            Ask
+          </PromptInputSubmit>
+        </PromptInputTools>
+      </PromptInputFooter>
+    </PromptInput>
+  );
+}
+
+function AskMessageView({ message }: { message: AskMessage }) {
   const text = message.parts
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
 
   return (
-    <article className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-      {!isUser ? (
-        <div className="mt-1 grid size-8 shrink-0 place-items-center rounded-md border bg-card">
-          <Bot className="size-4 text-primary" />
-        </div>
-      ) : null}
-      <div
-        className={`max-w-[82%] rounded-lg border px-4 py-3 text-sm leading-7 ${
-          isUser ? "bg-primary text-primary-foreground" : "bg-card text-foreground shadow-sm"
-        }`}
-      >
-        <p className="whitespace-pre-wrap">{text}</p>
-      </div>
-    </article>
+    <Message from={message.role}>
+      <MessageContent>
+        <MessageResponse>{text}</MessageResponse>
+      </MessageContent>
+    </Message>
   );
 }
 

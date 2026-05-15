@@ -1,7 +1,7 @@
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
 import { createAskRepo, createDocumentsRepo, createProjectsRepo } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
-import { runAskDocsWorkflow } from "@selectdb/ai";
+import { mastra, runAskDocsWorkflow } from "@selectdb/ai";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
 import { BadRequestError, type AskStreamEvent } from "@selectdb/shared";
 import { getRequestContext } from "../../../lib/auth";
@@ -17,8 +17,10 @@ export async function POST(request: Request) {
       documentIds?: string[];
       topK?: number;
       includeDebugChunks?: boolean;
+      agentId?: string;
     };
     const question = body.question?.trim() || getLatestUserText(body.messages);
+    const agent = resolveAskAgent(body.agentId);
 
     if (!question) throw new BadRequestError("question is required");
 
@@ -59,6 +61,7 @@ export async function POST(request: Request) {
           documentIds,
           topK: body.topK,
           includeDebugChunks: body.includeDebugChunks,
+          agent,
         })) {
           if (event.type === "answer_delta") {
             writer.write({ type: "data-status", data: { label: "Answering" }, transient: true });
@@ -97,6 +100,12 @@ export async function POST(request: Request) {
       },
     );
   }
+}
+
+function resolveAskAgent(agentId?: string) {
+  const agent = mastra.agents.docAnswerAgent;
+  if (!agentId || agentId === agent.id) return agent;
+  throw new BadRequestError("unknown ask agent");
 }
 
 function getLatestUserText(messages?: UIMessage[]) {

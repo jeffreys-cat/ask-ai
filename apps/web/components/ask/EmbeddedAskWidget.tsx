@@ -1,10 +1,22 @@
 "use client";
 
-import { Clipboard, Loader2, MessageSquarePlus, Send, Sparkles, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { Clipboard, Loader2, MessageSquarePlus, Sparkles, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { DefaultChatTransport, type UIMessage } from "ai";
+import { useChat } from "@ai-sdk/react";
 import { useEffect, useMemo, useState } from "react";
-import type { AskStreamEvent, Citation } from "@selectdb/shared";
+import { ASK_DOC_ANSWER_AGENT, type Citation, type RetrievedChunk } from "@selectdb/shared";
+import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  PromptInput,
+  PromptInputFooter,
+  PromptInputProvider,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+  usePromptInputController,
+} from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 interface ProjectSummary {
   id: string;
@@ -23,11 +35,13 @@ interface EmbeddedAskWidgetProps {
   primaryColor?: string;
 }
 
-type UIMessageStreamChunk =
-  | { type: "text-delta"; delta: string }
-  | { type: "data-citations"; data: Citation[] }
-  | { type: "data-status"; data: { label: string } }
-  | { type: "error"; errorText?: string };
+type AskDataParts = {
+  citations: Citation[];
+  retrieved_chunks: RetrievedChunk[];
+  status: { label: string };
+};
+
+type AskMessage = UIMessage<unknown, AskDataParts>;
 
 export function EmbeddedAskWidget({
   projectId,
@@ -40,12 +54,9 @@ export function EmbeddedAskWidget({
 }: EmbeddedAskWidgetProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? "");
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
-  const [status, setStatus] = useState("Ready");
+  const [statusLabel, setStatusLabel] = useState("Ready");
   const [error, setError] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(!projectId);
 
   const requestHeaders = useMemo(() => {
@@ -55,12 +66,42 @@ export function EmbeddedAskWidget({
     return headers;
   }, [organizationId, userId]);
 
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport<AskMessage>({
+        api: "/api/ask",
+        headers: requestHeaders,
+      }),
+    [requestHeaders],
+  );
+
+  const { messages, sendMessage, stop, status: chatStatus, error: chatError, setMessages, clearError } = useChat<AskMessage>({
+    transport,
+    experimental_throttle: 60,
+    onData: (part) => {
+      if (part.type === "data-citations") setCitations(part.data);
+      if (part.type === "data-status") setStatusLabel(part.data.label);
+    },
+    onError: (chatError) => {
+      setStatusLabel(chatError.message);
+      setError(chatError.message);
+    },
+    onFinish: () => setStatusLabel("Done"),
+  });
+
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
 
-  const canAsk = question.trim().length > 0 && selectedProjectId.length > 0 && !isBusy;
+  const answer = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant")
+    ?.parts.filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("") ?? "";
+  const isBusy = chatStatus === "submitted" || chatStatus === "streaming";
+  const canAsk = selectedProjectId.length > 0 && !isBusy;
 
   useEffect(() => {
     if (projectId) return;
@@ -83,94 +124,48 @@ export function EmbeddedAskWidget({
       setProjects(payload.projects);
       const firstReady = payload.projects.find((project) => project.status === "ready") ?? payload.projects[0];
       setSelectedProjectId((current) => current || firstReady?.id || "");
-      setStatus(firstReady ? "Ready" : "No projects available");
+      setStatusLabel(firstReady ? "Ready" : "No projects available");
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "Failed to load projects";
       setError(message);
-      setStatus(message);
+      setStatusLabel(message);
     } finally {
       setIsLoadingProjects(false);
     }
   }
 
-  async function ask() {
-    if (!canAsk) return;
+  async function ask(text: string) {
+    if (!text.trim() || !selectedProjectId || isBusy) return;
 
-    setIsBusy(true);
-    setAnswer("");
     setCitations([]);
     setError("");
-    setStatus("Searching sources");
-
-    try {
-      const response = await fetch("/api/ask", {
-        method: "POST",
-        headers: requestHeaders,
-        body: JSON.stringify({
-          question,
+    clearError();
+    setStatusLabel("Searching sources");
+    await sendMessage(
+      { text },
+      {
+        body: {
+          agentId: ASK_DOC_ANSWER_AGENT.id,
           projectId: selectedProjectId,
           topK: 8,
           includeDebugChunks: false,
-        }),
-      });
-      if (!response.ok) throw new Error(await readErrorResponse(response));
-      if (!response.body) throw new Error("No response stream");
-
-      setStatus("Answering");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
-        buffer = events.pop() ?? "";
-
-        for (const raw of events) {
-          const line = raw.split("\n").find((item) => item.startsWith("data:"));
-          if (!line) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") {
-            setStatus("Done");
-            continue;
-          }
-          const event = JSON.parse(data) as AskStreamEvent | UIMessageStreamChunk;
-          if (event.type === "answer_delta") setAnswer((current) => current + event.delta);
-          if (event.type === "text-delta") setAnswer((current) => current + event.delta);
-          if (event.type === "citations") setCitations(event.citations);
-          if (event.type === "data-citations") setCitations(event.data);
-          if (event.type === "data-status") setStatus(event.data.label);
-          if (event.type === "done") setStatus("Done");
-          if (event.type === "error") {
-            const message = "message" in event ? event.message : event.errorText || "Ask failed";
-            setStatus(message);
-            setError(message);
-          }
-        }
-      }
-    } catch (askError) {
-      const message = askError instanceof Error ? askError.message : "Ask failed";
-      setStatus(message);
-      setError(message);
-    } finally {
-      setIsBusy(false);
-    }
+        },
+      },
+    );
   }
 
   function startNewChat() {
-    setQuestion("");
-    setAnswer("");
+    setMessages([]);
     setCitations([]);
     setError("");
-    setStatus("Ready");
+    clearError();
+    setStatusLabel("Ready");
   }
 
   async function copyAnswer() {
     if (!answer) return;
     await navigator.clipboard.writeText(answer);
-    setStatus("Copied");
+    setStatusLabel("Copied");
   }
 
   return (
@@ -194,28 +189,31 @@ export function EmbeddedAskWidget({
           </Button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          {isLoadingProjects ? (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="mr-2 size-4 animate-spin" />
-              Loading project
-            </div>
-          ) : (
-            <div className="mx-auto flex max-w-none flex-col gap-5">
-              {error ? (
-                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                  {error}
-                </div>
-              ) : null}
+        <PromptInputProvider>
+          <Conversation className="px-1">
+            {isLoadingProjects ? (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                Loading project
+              </div>
+            ) : (
+              <ConversationContent className="max-w-none px-4 py-4">
+                {error || chatError ? (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                    {error || chatError?.message}
+                  </div>
+                ) : null}
 
-              <article
-                className={cn(
-                  "min-h-64 whitespace-pre-wrap text-[15px] leading-7",
-                  answer ? "text-foreground" : "flex items-center justify-center text-muted-foreground",
+                {messages.length === 0 ? (
+                  <ConversationEmptyState
+                    className="min-h-64"
+                    icon={<Sparkles className="size-6" />}
+                    title={isBusy ? "Generating answer..." : "Ask a question"}
+                    description="Answers stream with cited sources from the selected project."
+                  />
+                ) : (
+                  messages.map((message) => <EmbeddedMessageView key={message.id} message={message} />)
                 )}
-              >
-                {answer || (isBusy ? "Generating answer..." : "Ask a question to get an answer with cited sources.")}
-              </article>
 
               <div className="flex flex-wrap items-center gap-2 border-t pt-4">
                 <Button variant="secondary" size="sm" onClick={startNewChat}>
@@ -260,47 +258,73 @@ export function EmbeddedAskWidget({
                   </div>
                 </section>
               ) : null}
-            </div>
-          )}
-        </div>
+              </ConversationContent>
+            )}
+          </Conversation>
 
-        <footer className="shrink-0 border-t bg-background px-5 py-4">
-          <div className="rounded-lg border bg-background p-3 focus-within:ring-2 focus-within:ring-ring">
-            <textarea
-              className="min-h-16 w-full resize-none border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void ask();
-                }
-              }}
+          <footer className="shrink-0 border-t bg-background px-5 py-4">
+            <EmbeddedPromptInput
+              canAsk={canAsk}
+              onStop={stop}
+              onSubmit={ask}
               placeholder={placeholder}
+              status={chatStatus}
+              statusLabel={statusLabel}
             />
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-muted-foreground">{status}</span>
-              <Button size="icon" onClick={ask} disabled={!canAsk} aria-label="Send question">
-                {isBusy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-              </Button>
+            <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Powered by {brand}</span>
+              <span>Protected by site policy</span>
             </div>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-            <span>Powered by {brand}</span>
-            <span>Protected by site policy</span>
-          </div>
-        </footer>
+          </footer>
+        </PromptInputProvider>
       </section>
     </main>
   );
 }
 
-async function readErrorResponse(response: Response) {
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json")) {
-    const payload = (await response.json()) as { error?: string; message?: string };
-    return payload.error || payload.message || response.statusText || "Ask failed";
-  }
-  const text = await response.text();
-  return text || response.statusText || "Ask failed";
+function EmbeddedPromptInput({
+  canAsk,
+  onStop,
+  onSubmit,
+  placeholder,
+  status,
+  statusLabel,
+}: {
+  canAsk: boolean;
+  onStop: () => Promise<void>;
+  onSubmit: (text: string) => Promise<void>;
+  placeholder: string;
+  status: ReturnType<typeof useChat<AskMessage>>["status"];
+  statusLabel: string;
+}) {
+  const { textInput } = usePromptInputController();
+  const hasText = textInput.value.trim().length > 0;
+  const isBusy = status === "submitted" || status === "streaming";
+
+  return (
+    <PromptInput className="p-3 focus-within:ring-2 focus-within:ring-ring" onSubmit={({ text }) => onSubmit(text)}>
+      <PromptInputTextarea className="min-h-16 text-sm" placeholder={placeholder} />
+      <PromptInputFooter className="flex-row items-center justify-between border-0 px-0 pt-1">
+        <span className="text-xs text-muted-foreground">{statusLabel}</span>
+        <PromptInputTools>
+          <PromptInputSubmit disabled={(!canAsk || !hasText) && !isBusy} onStop={onStop} status={status} />
+        </PromptInputTools>
+      </PromptInputFooter>
+    </PromptInput>
+  );
+}
+
+function EmbeddedMessageView({ message }: { message: AskMessage }) {
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+
+  return (
+    <Message from={message.role}>
+      <MessageContent className="max-w-[92%] text-[15px]">
+        <MessageResponse>{text}</MessageResponse>
+      </MessageContent>
+    </Message>
+  );
 }
