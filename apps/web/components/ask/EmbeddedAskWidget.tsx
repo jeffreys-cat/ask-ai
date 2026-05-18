@@ -1,6 +1,6 @@
 "use client";
 
-import { Clipboard, Loader2, MessageSquarePlus, Sparkles, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { Clipboard, Loader2, MessageSquarePlus, Sparkles, X } from "lucide-react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { useChat } from "@ai-sdk/react";
 import { useEffect, useMemo, useState } from "react";
@@ -17,6 +17,7 @@ import {
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface ProjectSummary {
   id: string;
@@ -38,6 +39,7 @@ interface EmbeddedAskWidgetProps {
 type AskDataParts = {
   citations: Citation[];
   retrieved_chunks: RetrievedChunk[];
+  session: { id: string };
   status: { label: string };
 };
 
@@ -54,8 +56,9 @@ export function EmbeddedAskWidget({
 }: EmbeddedAskWidgetProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? "");
+  const [selectedSessionId, setSelectedSessionId] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
-  const [statusLabel, setStatusLabel] = useState("Ready");
+  const [, setStatusLabel] = useState("Ready");
   const [error, setError] = useState("");
   const [isLoadingProjects, setIsLoadingProjects] = useState(!projectId);
 
@@ -80,6 +83,7 @@ export function EmbeddedAskWidget({
     experimental_throttle: 60,
     onData: (part) => {
       if (part.type === "data-citations") setCitations(part.data);
+      if (part.type === "data-session") setSelectedSessionId(part.data.id);
       if (part.type === "data-status") setStatusLabel(part.data.label);
     },
     onError: (chatError) => {
@@ -102,6 +106,7 @@ export function EmbeddedAskWidget({
     .join("") ?? "";
   const isBusy = chatStatus === "submitted" || chatStatus === "streaming";
   const canAsk = selectedProjectId.length > 0 && !isBusy;
+  const hasCompletedAnswer = answer.length > 0 && !isBusy;
 
   useEffect(() => {
     if (projectId) return;
@@ -147,6 +152,7 @@ export function EmbeddedAskWidget({
         body: {
           agentId: ASK_DOC_ANSWER_AGENT.id,
           projectId: selectedProjectId,
+          sessionId: selectedSessionId || undefined,
           topK: 8,
           includeDebugChunks: false,
         },
@@ -157,6 +163,7 @@ export function EmbeddedAskWidget({
   function startNewChat() {
     setMessages([]);
     setCitations([]);
+    setSelectedSessionId("");
     setError("");
     clearError();
     setStatusLabel("Ready");
@@ -215,49 +222,48 @@ export function EmbeddedAskWidget({
                   messages.map((message) => <EmbeddedMessageView key={message.id} message={message} />)
                 )}
 
-              <div className="flex flex-wrap items-center gap-2 border-t pt-4">
-                <Button variant="secondary" size="sm" onClick={startNewChat}>
-                  <MessageSquarePlus className="size-4" />
-                  New chat
-                </Button>
-                <Button variant="secondary" size="sm" onClick={copyAnswer} disabled={!answer}>
-                  <Clipboard className="size-4" />
-                  Copy
-                </Button>
-                <div className="ml-auto flex gap-2">
-                  <Button variant="secondary" size="sm" disabled={!answer}>
-                    <ThumbsUp className="size-4" />
-                    Good answer
-                  </Button>
-                  <Button variant="secondary" size="sm" disabled={!answer}>
-                    <ThumbsDown className="size-4" />
-                    Bad answer
-                  </Button>
-                </div>
-              </div>
-
-              {citations.length > 0 ? (
-                <section className="grid gap-3">
-                  <h2 className="text-sm font-semibold">Answer based on the following sources:</h2>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    {citations.slice(0, 4).map((citation) => (
-                      <a
-                        key={citation.id}
-                        className="min-h-28 rounded-md border bg-card p-3 text-sm transition-colors hover:bg-accent"
-                        href={citation.sourceUri || "#"}
-                        target={citation.sourceUri ? "_blank" : undefined}
-                        rel="noreferrer"
-                      >
-                        <strong className="line-clamp-2 block leading-5">{citation.title}</strong>
-                        <span className="mt-4 flex items-center gap-2 truncate text-muted-foreground">
-                          <Sparkles className="size-4 shrink-0 text-primary" />
-                          {citation.sourceUri || citation.documentId}
-                        </span>
-                      </a>
-                    ))}
+                {isBusy && !answer ? (
+                  <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span>Generating answer...</span>
                   </div>
-                </section>
-              ) : null}
+                ) : null}
+
+                {citations.length > 0 ? (
+                  <section className="grid gap-3">
+                    <h2 className="text-sm font-semibold">Answer based on the following sources:</h2>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {citations.slice(0, 4).map((citation) => (
+                        <a
+                          key={citation.id}
+                          className="min-h-28 rounded-md border bg-card p-3 text-sm transition-colors hover:bg-accent"
+                          href={citation.sourceUri || "#"}
+                          target={citation.sourceUri ? "_blank" : undefined}
+                          rel="noreferrer"
+                        >
+                          <strong className="line-clamp-2 block leading-5">{citation.title}</strong>
+                          <span className="mt-4 flex items-center gap-2 truncate text-muted-foreground">
+                            <Sparkles className="size-4 shrink-0 text-primary" />
+                            {citation.sourceUri || citation.documentId}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {hasCompletedAnswer ? (
+                  <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+                    <Button variant="secondary" size="sm" onClick={startNewChat}>
+                      <MessageSquarePlus className="size-4" />
+                      New chat
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={copyAnswer}>
+                      <Clipboard className="size-4" />
+                      Copy
+                    </Button>
+                  </div>
+                ) : null}
               </ConversationContent>
             )}
           </Conversation>
@@ -269,7 +275,6 @@ export function EmbeddedAskWidget({
               onSubmit={ask}
               placeholder={placeholder}
               status={chatStatus}
-              statusLabel={statusLabel}
             />
             <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
               <span>Powered by {brand}</span>
@@ -288,24 +293,34 @@ function EmbeddedPromptInput({
   onSubmit,
   placeholder,
   status,
-  statusLabel,
 }: {
   canAsk: boolean;
   onStop: () => Promise<void>;
   onSubmit: (text: string) => Promise<void>;
   placeholder: string;
   status: ReturnType<typeof useChat<AskMessage>>["status"];
-  statusLabel: string;
 }) {
   const { textInput } = usePromptInputController();
   const hasText = textInput.value.trim().length > 0;
   const isBusy = status === "submitted" || status === "streaming";
 
+  async function submitAndClear(text: string) {
+    const submittedText = text.trim();
+    if (!submittedText) return;
+
+    textInput.clear();
+    try {
+      await onSubmit(submittedText);
+    } catch (submitError) {
+      textInput.setInput(submittedText);
+      throw submitError;
+    }
+  }
+
   return (
-    <PromptInput className="p-3 focus-within:ring-2 focus-within:ring-ring" onSubmit={({ text }) => onSubmit(text)}>
+    <PromptInput onSubmit={({ text }) => submitAndClear(text)}>
       <PromptInputTextarea className="min-h-16 text-sm" placeholder={placeholder} />
-      <PromptInputFooter className="flex-row items-center justify-between border-0 px-0 pt-1">
-        <span className="text-xs text-muted-foreground">{statusLabel}</span>
+      <PromptInputFooter className="flex-row items-center justify-end border-0 px-3 pt-1">
         <PromptInputTools>
           <PromptInputSubmit disabled={(!canAsk || !hasText) && !isBusy} onStop={onStop} status={status} />
         </PromptInputTools>
@@ -322,7 +337,7 @@ function EmbeddedMessageView({ message }: { message: AskMessage }) {
 
   return (
     <Message from={message.role}>
-      <MessageContent className="max-w-[92%] text-[15px]">
+      <MessageContent className={cn("text-[15px]", message.role === "assistant" ? "w-full max-w-full" : "max-w-[92%]")}>
         <MessageResponse>{text}</MessageResponse>
       </MessageContent>
     </Message>

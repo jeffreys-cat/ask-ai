@@ -696,7 +696,7 @@ function AskMessageView({ message }: { message: AskMessage }) {
 
   return (
     <Message from={message.role}>
-      <MessageContent>
+      <MessageContent className={cn(message.role === "assistant" ? "w-full max-w-full" : "max-w-[92%]")}>
         <MessageResponse>{text}</MessageResponse>
       </MessageContent>
     </Message>

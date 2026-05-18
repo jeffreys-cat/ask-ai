@@ -7,6 +7,7 @@ export default function AskPage() {
   data-title="Apache Doris AI"
   data-button-label="Ask AI"
   data-primary-color="#087f5b"
+  data-position="bottom-right"
   async
 ></script>`;
 
