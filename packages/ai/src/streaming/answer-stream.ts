@@ -4,6 +4,11 @@ export interface ChatStreamConfig {
   model: string;
 }
 
+export type ChatMessage = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+};
+
 export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
   const apiKey = env.OPENAI_API_KEY;
   const model = env.CHAT_MODEL;
@@ -18,6 +23,10 @@ export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
 }
 
 export async function* streamOpenAICompatibleAnswer(config: ChatStreamConfig, prompt: string): AsyncGenerator<string> {
+  yield* streamOpenAICompatibleChat(config, [{ role: "user", content: prompt }]);
+}
+
+export async function* streamOpenAICompatibleChat(config: ChatStreamConfig, messages: ChatMessage[]): AsyncGenerator<string> {
   const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -27,7 +36,7 @@ export async function* streamOpenAICompatibleAnswer(config: ChatStreamConfig, pr
     body: JSON.stringify({
       model: config.model,
       stream: true,
-      messages: [{ role: "user", content: prompt }],
+      messages,
     }),
   });
 

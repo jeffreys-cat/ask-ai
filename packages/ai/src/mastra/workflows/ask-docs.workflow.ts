@@ -2,8 +2,8 @@ import { SpanType } from "@mastra/core/observability";
 import type { AskAgentInput, AskStreamEvent, Citation, RetrievedChunk } from "@selectdb/shared";
 import { buildCitations, packContext, retrieveRelevantChunks, type EmbeddingProvider, type Retriever } from "@selectdb/rag";
 import { mastra } from "../index";
-import { buildDocAnswerPrompt } from "../agents/doc-answer.agent";
-import { chatConfigFromEnv, streamOpenAICompatibleAnswer, type ChatStreamConfig } from "../../streaming/answer-stream";
+import { buildDocAnswerMessages } from "../agents/doc-answer.agent";
+import { chatConfigFromEnv, streamOpenAICompatibleChat, type ChatStreamConfig } from "../../streaming/answer-stream";
 
 export interface AskDocsWorkflowInput {
   organizationId: string;
@@ -96,7 +96,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     }
 
     citations = buildCitations(chunks);
-    const prompt = buildDocAnswerPrompt({
+    const promptResult = await buildDocAnswerMessages({
       question: input.question,
       context: packContext(chunks),
       citations,
@@ -107,7 +107,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     const modelSpan = rootSpan?.createChildSpan({
       name: "Generate answer",
       type: SpanType.MODEL_GENERATION,
-      input: { question: input.question, citationCount: citations.length, chunkCount: chunks.length },
+      input: { messages: promptResult.messages, citationCount: citations.length, chunkCount: chunks.length },
       attributes: {
         model: chatConfig.model,
         provider: providerFromBaseUrl(chatConfig.baseUrl),
@@ -118,12 +118,13 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       metadata: {
         citationCount: citations.length,
         chunkCount: chunks.length,
+        langfuse: promptResult.litefusePrompt ? { prompt: promptResult.litefusePrompt } : undefined,
       },
     });
 
     try {
       let completionStarted = false;
-      for await (const delta of streamOpenAICompatibleAnswer(chatConfig, prompt)) {
+      for await (const delta of streamOpenAICompatibleChat(chatConfig, promptResult.messages)) {
         if (!completionStarted) {
           completionStarted = true;
           modelSpan?.update({ attributes: { completionStartTime: new Date() } });
