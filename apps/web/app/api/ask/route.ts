@@ -18,6 +18,7 @@ export async function POST(request: Request) {
       topK?: number;
       includeDebugChunks?: boolean;
       agentId?: string;
+      sessionId?: string;
     };
     const question = body.question?.trim() || getLatestUserText(body.messages);
     const agent = resolveAskAgent(body.agentId);
@@ -31,15 +32,22 @@ export async function POST(request: Request) {
       documentIds: body.documentIds,
       db,
     });
-    const sessionId = crypto.randomUUID();
     const askRepo = createAskRepo(db);
-    await askRepo.createSession({
-      id: sessionId,
-      organizationId: ctx.organizationId,
-      userId: ctx.userId,
-      question,
-      metadata: { projectId: body.projectId, documentIds, topK: body.topK },
-    });
+    let sessionId = body.sessionId;
+    if (sessionId) {
+      const session = await askRepo.findSession({ organizationId: ctx.organizationId, sessionId });
+      if (!session) throw new BadRequestError("session not found");
+      await askRepo.addUserMessage({ sessionId, question });
+    } else {
+      sessionId = crypto.randomUUID();
+      await askRepo.createSession({
+        id: sessionId,
+        organizationId: ctx.organizationId,
+        userId: ctx.userId,
+        question,
+        metadata: { projectId: body.projectId, documentIds, topK: body.topK },
+      });
+    }
 
     const stream = createUIMessageStream({
       originalMessages: body.messages,
@@ -48,6 +56,7 @@ export async function POST(request: Request) {
         let finalCitations: Extract<AskStreamEvent, { type: "citations" }>["citations"] = [];
         const textId = crypto.randomUUID();
 
+        writer.write({ type: "data-session", data: { id: sessionId }, transient: true });
         writer.write({ type: "data-status", data: { label: "Retrieving context" }, transient: true });
         writer.write({ type: "text-start", id: textId });
 

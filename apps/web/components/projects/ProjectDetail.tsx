@@ -2,18 +2,20 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileUp, Home } from "lucide-react";
+import { ArrowLeft, FileUp, Home, MessageSquareText } from "lucide-react";
+import { AskPanel } from "@/components/ask/AskPanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarProvider } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { ProjectIngest } from "./ProjectIngest";
 import { ProjectIngestNew } from "./ProjectIngestNew";
 import type { ProjectSummary } from "./types";
 
-export function ProjectDetail({ projectId, view }: { projectId: string; view: "overview" | "ingest" | "ingest-new" }) {
+export function ProjectDetail({ projectId, view }: { projectId: string; view: "overview" | "ingest" | "ingest-new" | "ask" }) {
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -41,7 +43,7 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
   }
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className={view === "ask" ? "h-screen overflow-hidden" : undefined}>
       <Sidebar>
         <SidebarHeader>
           <Button asChild variant="ghost" size="sm" className="-ml-2 justify-start">
@@ -65,16 +67,31 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
               <FileUp className="h-4 w-4" />
               Ingest
             </SidebarMenuButton>
+            <SidebarMenuButton href={`/admin/projects/${projectId}/ask`} isActive={view === "ask"}>
+              <MessageSquareText className="h-4 w-4" />
+              Ask
+            </SidebarMenuButton>
           </SidebarMenu>
         </SidebarContent>
       </Sidebar>
 
-      <SidebarInset>
-        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-8">
-          <header>
+      <SidebarInset className={view === "ask" ? "min-h-0 overflow-hidden" : undefined}>
+        <div
+          className={cn(
+            "mx-auto flex w-full flex-col gap-6 px-6 py-8",
+            view === "ask" ? "h-full min-h-0 max-w-none gap-4 px-4 py-6 lg:px-6" : "max-w-5xl",
+          )}
+        >
+          <header className="shrink-0">
             <div className="min-w-0">
-              {isLoading ? <Skeleton className="h-8 w-64" /> : <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>}
-              <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>
+              {view === "ask" ? (
+                <h1 className="truncate text-3xl font-semibold tracking-tight">Ask AI</h1>
+              ) : isLoading ? (
+                <Skeleton className="h-8 w-64" />
+              ) : (
+                <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
+              )}
+              {view === "ask" ? null : <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>}
             </div>
           </header>
 
@@ -85,9 +102,12 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
             <Button asChild variant={view === "ingest" || view === "ingest-new" ? "default" : "outline"} size="sm">
               <Link href={`/admin/projects/${projectId}/ingest`}>Ingest</Link>
             </Button>
+            <Button asChild variant={view === "ask" ? "default" : "outline"} size="sm">
+              <Link href={`/admin/projects/${projectId}/ask`}>Ask</Link>
+            </Button>
           </div>
 
-          <Separator />
+          <Separator className="shrink-0" />
 
           {error ? (
             <Alert variant="destructive">
@@ -100,6 +120,8 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
             <ProjectOverview project={project} isLoading={isLoading} projectId={projectId} />
           ) : view === "ingest-new" ? (
             <ProjectIngestNew projectId={projectId} onCreated={loadProject} />
+          ) : view === "ask" ? (
+            <AskPanel projectId={projectId} className="min-h-0 flex-1" />
           ) : (
             <ProjectIngest projectId={projectId} onIngested={() => loadProject({ silent: true })} />
           )}

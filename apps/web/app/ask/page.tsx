@@ -11,8 +11,8 @@ export default function AskPage() {
 ></script>`;
 
   return (
-    <main className="min-h-screen p-3">
-      <AskPanel />
+    <main className="h-screen overflow-hidden p-3">
+      <AskPanel className="h-full min-h-0" />
     </main>
   );
 }
