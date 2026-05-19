@@ -9,3 +9,4 @@ coverage
 ask-ai-page.png
 *.tsbuildinfo
 .data
+.env.docker

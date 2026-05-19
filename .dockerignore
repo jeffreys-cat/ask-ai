@@ -1,0 +1,17 @@
+.git
+.next
+**/.next
+.turbo
+**/.turbo
+.playwright-mcp
+.data
+node_modules
+**/node_modules
+coverage
+**/coverage
+dist
+**/dist
+*.tsbuildinfo
+.env
+.env.local
+ask-ai-page.png

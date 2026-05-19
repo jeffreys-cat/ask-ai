@@ -19,7 +19,8 @@
     "@selectdb/rag": "workspace:*",
     "@selectdb/shared": "workspace:*",
     "@selectdb/web-crawler": "workspace:*",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

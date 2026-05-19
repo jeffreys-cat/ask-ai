@@ -1,0 +1,43 @@
+services:
+  web:
+    image: ask-ai-web:latest
+    build:
+      context: .
+      target: web
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+    restart: unless-stopped
+    env_file:
+      - path: .env.docker
+        required: false
+    environment:
+      NODE_ENV: production
+      INGEST_SOURCE_LOCAL_DIR: /app/.data/ingest-sources
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ingest-sources:/app/.data/ingest-sources
+
+  worker:
+    image: ask-ai-worker:latest
+    build:
+      context: .
+      target: worker
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+    restart: unless-stopped
+    env_file:
+      - path: .env.docker
+        required: false
+    environment:
+      NODE_ENV: production
+      INGEST_SOURCE_LOCAL_DIR: /app/.data/ingest-sources
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ingest-sources:/app/.data/ingest-sources
+
+volumes:
+  ingest-sources:
