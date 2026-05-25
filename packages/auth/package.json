@@ -12,8 +12,10 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@selectdb/db": "workspace:*",
     "@selectdb/shared": "workspace:*",
     "better-auth": "^1.6.9",
+    "drizzle-orm": "^0.45.2",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {

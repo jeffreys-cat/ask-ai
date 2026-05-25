@@ -6,7 +6,7 @@ import {
   hashProjectApiKey,
   projectApiKeyMetadata,
 } from "@selectdb/db";
-import { BadRequestError } from "@selectdb/shared";
+import { BadRequestError, UnauthorizedError } from "@selectdb/shared";
 import { getRequestContext } from "../../../../../lib/auth";
 import { getDb } from "../../../../../lib/runtime";
 
@@ -17,7 +17,7 @@ interface RouteContext {
 export async function GET(request: Request, context: RouteContext) {
   try {
     const { projectId } = await context.params;
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     await assertProject(ctx.organizationId, projectId);
 
     const keys = await createProjectApiKeysRepo(getDb()).listByProject({ organizationId: ctx.organizationId, projectId });
@@ -30,7 +30,7 @@ export async function GET(request: Request, context: RouteContext) {
 export async function POST(request: Request, context: RouteContext) {
   try {
     const { projectId } = await context.params;
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     const body = (await request.json().catch(() => ({}))) as { name?: string };
     await assertProject(ctx.organizationId, projectId);
 
@@ -59,6 +59,6 @@ async function assertProject(organizationId: string, projectId: string) {
 }
 
 function errorResponse(error: unknown) {
-  const status = error instanceof BadRequestError ? error.status : 500;
+  const status = error instanceof BadRequestError || error instanceof UnauthorizedError ? error.status : 500;
   return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown error" }, { status });
 }

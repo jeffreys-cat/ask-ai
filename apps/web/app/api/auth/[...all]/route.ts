@@ -1,4 +1,9 @@
-import { auth } from "@selectdb/auth";
+import { auth, ensureInitUser } from "@selectdb/auth";
 
-export const GET = auth.handler;
-export const POST = auth.handler;
+async function handler(request: Request) {
+  await ensureInitUser();
+  return auth.handler(request);
+}
+
+export const GET = handler;
+export const POST = handler;

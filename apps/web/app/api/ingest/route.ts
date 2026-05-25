@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { createDocumentsRepo, createIngestionRepo } from "@selectdb/db";
-import { BadRequestError } from "@selectdb/shared";
+import { BadRequestError, UnauthorizedError } from "@selectdb/shared";
 import { ingestDocument } from "@selectdb/jobs";
 import { getRequestContext } from "../../../lib/auth";
 import { getDb, getDoris } from "../../../lib/runtime";
 
 export async function POST(request: Request) {
   try {
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     const db = getDb();
     const documentsRepo = createDocumentsRepo(db);
     const ingestionRepo = createIngestionRepo(db);
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ingestionId: job.id, status: "completed", chunkCount: result.chunkCount });
   } catch (error) {
-    const status = error instanceof BadRequestError ? error.status : 500;
+    const status = error instanceof BadRequestError || error instanceof UnauthorizedError ? error.status : 500;
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown error" }, { status });
   }
 }

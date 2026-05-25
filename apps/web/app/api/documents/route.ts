@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { createDocumentsRepo } from "@selectdb/db";
-import { BadRequestError } from "@selectdb/shared";
+import { BadRequestError, UnauthorizedError } from "@selectdb/shared";
 import { getRequestContext } from "../../../lib/auth";
 import { getDb } from "../../../lib/runtime";
 
 export async function POST(request: Request) {
   try {
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     const body = (await request.json()) as {
       title?: string;
       sourceType?: "upload" | "paste" | "url" | "project_upload";
@@ -38,6 +38,6 @@ export async function POST(request: Request) {
 }
 
 function errorResponse(error: unknown) {
-  const status = error instanceof BadRequestError ? error.status : 500;
+  const status = error instanceof BadRequestError || error instanceof UnauthorizedError ? error.status : 500;
   return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown error" }, { status });
 }

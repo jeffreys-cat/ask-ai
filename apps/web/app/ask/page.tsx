@@ -1,19 +1,20 @@
 import { AskPanel } from "../../components/ask/AskPanel";
+import { SignOutButton } from "@/components/auth/SignOutButton";
+import { requirePageSession } from "@/lib/page-auth";
 
-export default function AskPage() {
-  const embedSnippet = `<script
-  src="https://your-ask-ai-domain.com/embed.js"
-  data-project-id="PROJECT_ID"
-  data-title="Apache Doris AI"
-  data-button-label="Ask AI"
-  data-primary-color="#087f5b"
-  data-position="bottom-right"
-  async
-></script>`;
+export default async function AskPage() {
+  await requirePageSession("/ask");
 
   return (
-    <main className="h-screen overflow-hidden p-3">
-      <AskPanel className="h-full min-h-0" />
+    <main className="flex h-screen flex-col overflow-hidden p-3">
+      <header className="mb-3 flex shrink-0 items-center justify-between gap-3 px-1">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Ask AI</h1>
+          <p className="text-sm text-muted-foreground">Search organization-scoped project documents.</p>
+        </div>
+        <SignOutButton />
+      </header>
+      <AskPanel className="min-h-0 flex-1" />
     </main>
   );
 }

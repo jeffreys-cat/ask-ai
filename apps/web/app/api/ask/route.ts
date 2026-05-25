@@ -4,12 +4,12 @@ import { createChunkStore } from "@selectdb/doris";
 import { mastra, runAskDocsWorkflow } from "@selectdb/ai";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
 import { BadRequestError, type AskStreamEvent } from "@selectdb/shared";
-import { getRequestContext } from "../../../lib/auth";
+import { getPublicRequestContext } from "../../../lib/auth";
 import { getDb, getDoris } from "../../../lib/runtime";
 
 export async function POST(request: Request) {
   try {
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getPublicRequestContext(request.headers);
     const body = (await request.json()) as {
       messages?: UIMessage[];
       question?: string;

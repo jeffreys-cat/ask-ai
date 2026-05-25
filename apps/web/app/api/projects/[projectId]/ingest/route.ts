@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createDocumentsRepo, createIngestionRepo, createProjectsRepo } from "@selectdb/db";
 import { createIngestSourceStorage } from "@selectdb/jobs";
 import { createLogger, serializeError } from "@selectdb/logger";
-import { BadRequestError } from "@selectdb/shared";
+import { BadRequestError, UnauthorizedError } from "@selectdb/shared";
 import { discoverSitemapUrls } from "@selectdb/web-crawler";
 import { getRequestContext } from "../../../../../lib/auth";
 import { getDb } from "../../../../../lib/runtime";
@@ -16,7 +16,7 @@ export async function GET(request: Request, context: RouteContext) {
   const log = createLogger({ component: "web.api.projects.ingest.list", projectId });
 
   try {
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     const db = getDb();
     const projectsRepo = createProjectsRepo(db);
     const ingestionRepo = createIngestionRepo(db);
@@ -36,7 +36,7 @@ export async function POST(request: Request, context: RouteContext) {
   const log = createLogger({ component: "web.api.projects.ingest", projectId });
 
   try {
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     const db = getDb();
     const projectsRepo = createProjectsRepo(db);
     const documentsRepo = createDocumentsRepo(db);
@@ -359,6 +359,6 @@ function isJsonRequest(request: Request) {
 }
 
 function errorResponse(error: unknown) {
-  const status = error instanceof BadRequestError ? error.status : 500;
+  const status = error instanceof BadRequestError || error instanceof UnauthorizedError ? error.status : 500;
   return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown error" }, { status });
 }

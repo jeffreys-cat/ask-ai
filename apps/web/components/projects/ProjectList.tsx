@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ProjectStatusBadge } from "./status";
 import type { ProjectSummary } from "./types";
 
@@ -74,11 +75,12 @@ export function ProjectList() {
           <h1 className="text-3xl font-semibold tracking-tight">Projects</h1>
           <p className="mt-2 text-sm text-muted-foreground">Create documentation projects and manage Markdown ingestion.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={loadProjects} disabled={isLoading}>
             {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             Refresh
           </Button>
+          <SignOutButton />
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button>

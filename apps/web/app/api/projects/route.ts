@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { createProjectsRepo } from "@selectdb/db";
-import { BadRequestError } from "@selectdb/shared";
+import { BadRequestError, UnauthorizedError } from "@selectdb/shared";
 import { getRequestContext } from "../../../lib/auth";
 import { getDb } from "../../../lib/runtime";
 
 export async function GET(request: Request) {
   try {
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     const projects = await createProjectsRepo(getDb()).list(ctx.organizationId);
     return NextResponse.json({ projects });
   } catch (error) {
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const ctx = getRequestContext(request.headers);
+    const ctx = await getRequestContext(request.headers);
     const body = (await request.json()) as {
       name?: string;
       description?: string;
@@ -42,6 +42,6 @@ export async function POST(request: Request) {
 }
 
 function errorResponse(error: unknown) {
-  const status = error instanceof BadRequestError ? error.status : 500;
+  const status = error instanceof BadRequestError || error instanceof UnauthorizedError ? error.status : 500;
   return NextResponse.json({ error: error instanceof Error ? error.message : "Unknown error" }, { status });
 }
