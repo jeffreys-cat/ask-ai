@@ -2,21 +2,20 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Copy, FileUp, Home, KeyRound, MessageSquareText, Plus, Trash2 } from "lucide-react";
+import { Copy, FileUp, KeyRound, Plus, Trash2 } from "lucide-react";
 import { AskPanel } from "@/components/ask/AskPanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Sidebar, SidebarContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarProvider } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ProjectIngest } from "./ProjectIngest";
 import { ProjectIngestNew } from "./ProjectIngestNew";
 import type { ProjectSummary } from "./types";
 
-export function ProjectDetail({ projectId, view }: { projectId: string; view: "overview" | "ingest" | "ingest-new" | "ask" }) {
+export function ProjectDetail({ projectId, view }: { projectId: string; view: "overview" | "ingest" | "ingest-new" | "ask" | "api-keys" }) {
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -44,91 +43,61 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
   }
 
   return (
-    <SidebarProvider className={view === "ask" ? "h-screen overflow-hidden" : undefined}>
-      <Sidebar>
-        <SidebarHeader>
-          <Button asChild variant="ghost" size="sm" className="-ml-2 justify-start">
-            <Link href="/admin/projects">
-              <ArrowLeft />
-              Projects
-            </Link>
-          </Button>
-          <div className="mt-4 min-w-0">
-            <p className="truncate text-sm font-semibold">{project?.name ?? "Project"}</p>
-            <p className="mt-1 truncate text-xs text-muted-foreground">{projectId}</p>
-          </div>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarMenu>
-            <SidebarMenuButton href={`/admin/projects/${projectId}`} isActive={view === "overview"}>
-              <Home className="h-4 w-4" />
-              Overview
-            </SidebarMenuButton>
-            <SidebarMenuButton href={`/admin/projects/${projectId}/ingest`} isActive={view === "ingest" || view === "ingest-new"}>
-              <FileUp className="h-4 w-4" />
-              Ingest
-            </SidebarMenuButton>
-            <SidebarMenuButton href={`/admin/projects/${projectId}/ask`} isActive={view === "ask"}>
-              <MessageSquareText className="h-4 w-4" />
-              Ask
-            </SidebarMenuButton>
-          </SidebarMenu>
-        </SidebarContent>
-      </Sidebar>
-
-      <SidebarInset className={view === "ask" ? "min-h-0 overflow-hidden" : undefined}>
-        <div
-          className={cn(
-            "mx-auto flex w-full flex-col gap-6 px-6 py-8",
-            view === "ask" ? "h-full min-h-0 max-w-none gap-4 px-4 py-6 lg:px-6" : "max-w-5xl",
-          )}
-        >
-          <header className="shrink-0">
-            <div className="min-w-0">
-              {view === "ask" ? (
-                <h1 className="truncate text-3xl font-semibold tracking-tight">Ask AI</h1>
-              ) : isLoading ? (
-                <Skeleton className="h-8 w-64" />
-              ) : (
-                <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
-              )}
-              {view === "ask" ? null : <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>}
-            </div>
-          </header>
-
-          <div className="flex gap-2 md:hidden">
-            <Button asChild variant={view === "overview" ? "default" : "outline"} size="sm">
-              <Link href={`/admin/projects/${projectId}`}>Overview</Link>
-            </Button>
-            <Button asChild variant={view === "ingest" || view === "ingest-new" ? "default" : "outline"} size="sm">
-              <Link href={`/admin/projects/${projectId}/ingest`}>Ingest</Link>
-            </Button>
-            <Button asChild variant={view === "ask" ? "default" : "outline"} size="sm">
-              <Link href={`/admin/projects/${projectId}/ask`}>Ask</Link>
-            </Button>
-          </div>
-
-          <Separator className="shrink-0" />
-
-          {error ? (
-            <Alert variant="destructive">
-              <AlertTitle>Project request failed</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {view === "overview" ? (
-            <ProjectOverview project={project} isLoading={isLoading} projectId={projectId} />
-          ) : view === "ingest-new" ? (
-            <ProjectIngestNew projectId={projectId} onCreated={loadProject} />
-          ) : view === "ask" ? (
-            <AskPanel projectId={projectId} className="min-h-0 flex-1" />
+    <div
+      className={cn(
+        "mx-auto flex w-full flex-col gap-6 px-6 py-8",
+        view === "ask" ? "h-screen min-h-0 max-w-none gap-4 overflow-hidden px-4 py-6 lg:px-6" : "max-w-5xl",
+      )}
+    >
+      <header className="shrink-0">
+        <div className="min-w-0">
+          {view === "ask" ? (
+            <h1 className="truncate text-3xl font-semibold tracking-tight">Ask AI</h1>
+          ) : isLoading ? (
+            <Skeleton className="h-8 w-64" />
           ) : (
-            <ProjectIngest projectId={projectId} onIngested={() => loadProject({ silent: true })} />
+            <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
           )}
+          {view === "ask" ? null : <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>}
         </div>
-      </SidebarInset>
-    </SidebarProvider>
+      </header>
+
+      <div className="flex gap-2 md:hidden">
+        <Button asChild variant={view === "overview" ? "default" : "outline"} size="sm">
+          <Link href={`/admin/projects/${projectId}`}>Overview</Link>
+        </Button>
+        <Button asChild variant={view === "ingest" || view === "ingest-new" ? "default" : "outline"} size="sm">
+          <Link href={`/admin/projects/${projectId}/ingest`}>Ingest</Link>
+        </Button>
+        <Button asChild variant={view === "ask" ? "default" : "outline"} size="sm">
+          <Link href={`/admin/projects/${projectId}/ask`}>Ask</Link>
+        </Button>
+        <Button asChild variant={view === "api-keys" ? "default" : "outline"} size="sm">
+          <Link href={`/admin/projects/${projectId}/api-keys`}>API keys</Link>
+        </Button>
+      </div>
+
+      <Separator className="shrink-0" />
+
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTitle>Project request failed</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {view === "overview" ? (
+        <ProjectOverview project={project} isLoading={isLoading} projectId={projectId} />
+      ) : view === "ingest-new" ? (
+        <ProjectIngestNew projectId={projectId} onCreated={loadProject} />
+      ) : view === "ask" ? (
+        <AskPanel projectId={projectId} className="min-h-0 flex-1" />
+      ) : view === "api-keys" ? (
+        <ProjectApiKeys projectId={projectId} />
+      ) : (
+        <ProjectIngest projectId={projectId} onIngested={() => loadProject({ silent: true })} />
+      )}
+    </div>
   );
 }
 
@@ -174,7 +143,6 @@ function ProjectOverview({ project, projectId, isLoading }: { project: ProjectSu
         </Card>
       </div>
 
-      <ProjectApiKeys projectId={projectId} />
     </div>
   );
 }

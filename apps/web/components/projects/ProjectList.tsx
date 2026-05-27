@@ -13,7 +13,6 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { SignOutButton } from "@/components/auth/SignOutButton";
 import { ProjectStatusBadge } from "./status";
 import type { ProjectSummary } from "./types";
 
@@ -80,7 +79,6 @@ export function ProjectList() {
             {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             Refresh
           </Button>
-          <SignOutButton />
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button>
