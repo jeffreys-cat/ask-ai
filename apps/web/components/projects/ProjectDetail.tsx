@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Copy, FileUp, KeyRound, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, FileCode2, FileUp, KeyRound, Plus, Trash2 } from "lucide-react";
 import { AskPanel } from "@/components/ask/AskPanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -143,8 +143,83 @@ function ProjectOverview({ project, projectId, isLoading }: { project: ProjectSu
         </Card>
       </div>
 
+      <ProjectEmbedPrompt project={project} projectId={projectId} isLoading={isLoading} />
     </div>
   );
+}
+
+function ProjectEmbedPrompt({ project, projectId, isLoading }: { project: ProjectSummary | null; projectId: string; isLoading: boolean }) {
+  const [origin, setOrigin] = useState("");
+  const [copied, setCopied] = useState(false);
+  const embedProjectId = project?.id ?? projectId;
+  const title = project?.name ? `${project.name} AI` : "Ask AI";
+  const embedCode = buildEmbedCode({
+    origin: origin || "https://your-ask-ai-host.example",
+    projectId: embedProjectId,
+    title,
+  });
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  async function copyEmbedCode() {
+    await navigator.clipboard.writeText(embedCode);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FileCode2 className="size-5" />
+          Embed
+        </CardTitle>
+        <CardDescription>Paste this code before the closing body tag on the site that should show this project chatbot.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {isLoading ? (
+          <>
+            <Skeleton className="h-5 w-2/3" />
+            <Skeleton className="h-40 w-full" />
+          </>
+        ) : (
+          <>
+            <pre className="max-h-72 overflow-auto rounded-md border bg-muted p-4 text-xs leading-5">
+              <code>{embedCode}</code>
+            </pre>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={copyEmbedCode}>
+                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+                {copied ? "Copied" : "Copy embed code"}
+              </Button>
+              <span className="text-xs text-muted-foreground">Project ID: {embedProjectId}</span>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function buildEmbedCode({ origin, projectId, title }: { origin: string; projectId: string; title: string }) {
+  return `<script
+  src="${escapeHtmlAttribute(origin)}/embed.js"
+  data-project-id="${escapeHtmlAttribute(projectId)}"
+  data-title="${escapeHtmlAttribute(title)}"
+  data-placeholder="Ask anything about our docs..."
+  data-primary-color="#087f5b"
+  async
+></script>`;
+}
+
+function escapeHtmlAttribute(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 interface ProjectApiKey {
