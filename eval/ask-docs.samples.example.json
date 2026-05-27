@@ -1,0 +1,45 @@
+{
+  "items": [
+    {
+      "input": {
+        "question": "Which environment variables are required to start the documentation assistant?",
+        "projectId": "replace-with-project-id",
+        "tags": ["config", "critical"]
+      },
+      "expectedOutput": {
+        "expectedAnswer": "The service requires OPENAI_API_KEY and CHAT_MODEL, with OPENAI_BASE_URL optional for OpenAI-compatible providers.",
+        "expectedCitationDocIds": ["replace-with-config-doc-id"],
+        "mustInclude": ["OPENAI_API_KEY", "CHAT_MODEL"]
+      },
+      "metadata": {
+        "critical": true
+      }
+    },
+    {
+      "input": {
+        "question": "How do I ingest a folder of Markdown files?",
+        "projectId": "replace-with-project-id",
+        "tags": ["ingest"]
+      },
+      "expectedOutput": {
+        "expectedAnswer": "Use the project ingest flow, choose a folder or Markdown files, and wait for the background ingest task to finish.",
+        "expectedCitationDocIds": ["replace-with-ingest-doc-id"],
+        "mustInclude": ["Markdown", "ingest"]
+      },
+      "metadata": {}
+    },
+    {
+      "input": {
+        "question": "What is the private roadmap item that is not documented?",
+        "projectId": "replace-with-project-id",
+        "tags": ["no-context"]
+      },
+      "expectedOutput": {
+        "expectedAnswer": "There is not enough document context to answer.",
+        "expectedCitationDocIds": [],
+        "shouldRefuse": true
+      },
+      "metadata": {}
+    }
+  ]
+}
