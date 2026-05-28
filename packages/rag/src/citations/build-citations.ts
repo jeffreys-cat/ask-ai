@@ -8,6 +8,7 @@ export function buildCitations(chunks: RetrievedChunk[]): Citation[] {
     title: chunk.title ?? `Document ${chunk.documentId}`,
     excerpt: chunk.content.slice(0, 280),
     score: chunk.score,
+    retrieval: chunk.retrieval,
     sourceUri: chunk.sourceUri,
   }));
 }

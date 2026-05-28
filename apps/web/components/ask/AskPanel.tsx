@@ -715,7 +715,7 @@ function ContextInspector({
   onClose?: () => void;
 }) {
   return (
-    <div className={`flex h-full min-h-0 flex-col ${compact ? "max-h-[520px]" : ""}`}>
+    <div className={`flex h-full min-h-0 max-w-full flex-col overflow-x-hidden ${compact ? "max-h-[520px]" : ""}`}>
       <div className="shrink-0 border-b bg-card px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -732,8 +732,8 @@ function ContextInspector({
           ) : null}
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <div className="grid gap-5">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4">
+        <div className="grid min-w-0 gap-5">
           <InspectorGroup
             icon={<BookOpenText className="size-4" />}
             title="Citations"
@@ -741,19 +741,17 @@ function ContextInspector({
             count={citations.length}
           >
             {citations.map((citation) => (
-              <article key={citation.id} className="rounded-md border bg-card p-3">
-                <div className="flex items-start justify-between gap-3">
+              <article key={citation.id} className="min-w-0 overflow-hidden rounded-md border bg-card p-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">
+                    <div className="break-words text-sm font-medium">
                       [{citation.id}] {citation.title}
                     </div>
-                    {citation.sourceUri ? <div className="mt-1 truncate text-xs text-muted-foreground">{citation.sourceUri}</div> : null}
+                    {citation.sourceUri ? <div className="mt-1 break-all text-xs text-muted-foreground">{citation.sourceUri}</div> : null}
                   </div>
-                  {citation.score === undefined ? null : (
-                    <span className="text-xs tabular-nums text-muted-foreground">{citation.score.toFixed(3)}</span>
-                  )}
                 </div>
-                <p className="mt-3 line-clamp-5 text-xs leading-5 text-muted-foreground">{citation.excerpt}</p>
+                <RetrievalScoreGrid score={citation.score} retrieval={citation.retrieval} />
+                <p className="mt-3 line-clamp-5 break-words text-xs leading-5 text-muted-foreground">{citation.excerpt}</p>
               </article>
             ))}
           </InspectorGroup>
@@ -765,15 +763,15 @@ function ContextInspector({
             count={chunks.length}
           >
             {chunks.map((chunk) => (
-              <article key={chunk.chunkId} className="rounded-md border bg-card p-3">
-                <div className="flex items-start justify-between gap-3">
+              <article key={chunk.chunkId} className="min-w-0 overflow-hidden rounded-md border bg-card p-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{chunk.title ?? chunk.documentId}</div>
-                    {chunk.sourceUri ? <div className="mt-1 truncate text-xs text-muted-foreground">{chunk.sourceUri}</div> : null}
+                    <div className="break-words text-sm font-medium">{chunk.title ?? chunk.documentId}</div>
+                    {chunk.sourceUri ? <div className="mt-1 break-all text-xs text-muted-foreground">{chunk.sourceUri}</div> : null}
                   </div>
-                  <span className="text-xs tabular-nums text-muted-foreground">{chunk.score.toFixed(3)}</span>
                 </div>
-                <p className="mt-3 line-clamp-6 text-xs leading-5 text-muted-foreground">{chunk.content}</p>
+                <RetrievalScoreGrid score={chunk.score} retrieval={chunk.retrieval} />
+                <p className="mt-3 line-clamp-6 break-words text-xs leading-5 text-muted-foreground">{chunk.content}</p>
               </article>
             ))}
           </InspectorGroup>
@@ -781,6 +779,39 @@ function ContextInspector({
       </div>
     </div>
   );
+}
+
+function RetrievalScoreGrid({
+  score,
+  retrieval,
+}: {
+  score?: number;
+  retrieval?: Citation["retrieval"];
+}) {
+  if (score === undefined && !retrieval) return null;
+
+  const values = [
+    { label: "Final", value: score },
+    { label: "Vector", value: retrieval?.vectorScore },
+    { label: "BM25", value: retrieval?.keywordScore },
+  ];
+
+  return (
+    <dl className="mt-3 grid min-w-0 grid-cols-3 gap-1.5">
+      {values.map((item) => (
+        <div key={item.label} className="min-w-0 rounded-md border bg-background px-2 py-1.5">
+          <dt className="text-[10px] font-medium uppercase text-muted-foreground">{item.label}</dt>
+          <dd className="mt-0.5 truncate text-xs tabular-nums text-foreground" title={formatScore(item.value)}>
+            {formatScore(item.value)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function formatScore(value: number | undefined) {
+  return value === undefined ? "-" : value.toFixed(4);
 }
 
 function InspectorGroup({

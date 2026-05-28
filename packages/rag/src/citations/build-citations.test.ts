@@ -12,6 +12,12 @@ describe("buildCitations", () => {
         title: "Doc title",
         metadata: {},
         score: 0.9,
+        retrieval: {
+          mode: "hybrid",
+          vectorScore: 0.8,
+          keywordScore: 2.1,
+          matchedBy: ["vector", "keyword"],
+        },
       },
     ]);
 
@@ -20,6 +26,11 @@ describe("buildCitations", () => {
       documentId: "doc",
       chunkId: "chunk",
       title: "Doc title",
+      retrieval: {
+        mode: "hybrid",
+        vectorScore: 0.8,
+        keywordScore: 2.1,
+      },
     });
   });
 });

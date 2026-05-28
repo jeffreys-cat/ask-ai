@@ -42,6 +42,7 @@ export interface Citation {
   title: string;
   excerpt: string;
   score?: number;
+  retrieval?: RetrievedChunk["retrieval"];
   sourceUri?: string;
 }
 
