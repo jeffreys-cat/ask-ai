@@ -51,7 +51,7 @@ export function EmbeddedAskWidget({
   userId,
   title = "Ask AI",
   placeholder = "Ask a follow-up",
-  brand = "ASK AI",
+  brand = "Apache Doris",
   primaryColor,
 }: EmbeddedAskWidgetProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -107,6 +107,16 @@ export function EmbeddedAskWidget({
   const isBusy = chatStatus === "submitted" || chatStatus === "streaming";
   const canAsk = selectedProjectId.length > 0 && !isBusy;
   const hasCompletedAnswer = answer.length > 0 && !isBusy;
+
+  useEffect(() => {
+    document.documentElement.classList.add("ask-ai-embed-transparent");
+    document.body.classList.add("ask-ai-embed-transparent");
+
+    return () => {
+      document.documentElement.classList.remove("ask-ai-embed-transparent");
+      document.body.classList.remove("ask-ai-embed-transparent");
+    };
+  }, []);
 
   useEffect(() => {
     if (projectId) return;
@@ -177,8 +187,8 @@ export function EmbeddedAskWidget({
 
   return (
     <main className="fixed inset-0 flex items-center justify-center bg-black/55 px-3 py-4 sm:px-6">
-      <section className="flex h-[min(92vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border bg-background shadow-2xl">
-        <header className="flex h-16 shrink-0 items-center justify-between border-b px-5">
+      <section className="flex h-[min(92vh,760px)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border bg-background/95 shadow-2xl backdrop-blur-md supports-[backdrop-filter]:bg-background/90">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b bg-background/80 px-5 backdrop-blur">
           <div className="flex min-w-0 items-center gap-3">
             <span
               className="flex size-8 shrink-0 items-center justify-center rounded-md text-white"
@@ -268,7 +278,7 @@ export function EmbeddedAskWidget({
             )}
           </Conversation>
 
-          <footer className="shrink-0 border-t bg-background px-5 py-4">
+          <footer className="shrink-0 border-t bg-background/80 px-5 py-4 backdrop-blur">
             <EmbeddedPromptInput
               canAsk={canAsk}
               onStop={stop}

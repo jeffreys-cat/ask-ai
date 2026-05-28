@@ -27,7 +27,9 @@ async function main() {
       ON ${chunksTable} (content)
       USING INVERTED
       PROPERTIES (
-        "parser" = "unicode"
+        "lower_case" = "true",
+        "parser" = "unicode",
+        "support_phrase" = "true"
       )
     `);
     if (enableAnnIndex) {

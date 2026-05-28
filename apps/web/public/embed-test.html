@@ -75,8 +75,8 @@
       <h1>ASK AI Embed Test</h1>
       <p>
         This static host page verifies the embedded ASK AI launcher. The custom floating button should appear in the
-        bottom-right corner, open an iframe dialog titled <code>Litefuse AI</code>, and automatically use the first
-        ready project from the local ASK AI service.
+        bottom-right corner, open an iframe dialog titled <code>Litefuse AI</code>, and target the configured test
+        project without needing to load local project data.
       </p>
       <section class="panel">
         <strong>Expected behavior</strong>
@@ -87,7 +87,8 @@
     <button id="ask-ai-trigger" class="ask-ai-custom-trigger">ASK AI</button>
 
     <script
-      src="http://localhost:3000/embed.js"
+      src="/embed.js"
+      data-project-id="embed-test-project"
       data-title="Litefuse AI"
       data-placeholder="Ask anything about our docs..."
       data-primary-color="#087f5b"

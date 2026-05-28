@@ -163,6 +163,11 @@ a {
   }
 }
 
+html.ask-ai-embed-transparent,
+body.ask-ai-embed-transparent {
+  background: transparent !important;
+}
+
 @layer components {
   .markdown-answer {
     @apply w-full max-w-full text-[15px] leading-7;
