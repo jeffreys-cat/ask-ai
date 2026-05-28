@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { config } from "dotenv";
-import { createDorisPool, getDorisConfig } from "@selectdb/doris";
+import { assertSqlIdentifier, createDorisPool, getDorisConfig } from "@selectdb/doris";
 
 config({ path: ".env.local", quiet: true });
 config({ quiet: true });
@@ -16,15 +16,24 @@ async function main() {
   const { database: _database, ...configWithoutDatabase } = getDorisConfig();
   const pool = createDorisPool(configWithoutDatabase);
   const enableAnnIndex = process.env.DORIS_ENABLE_ANN_INDEX === "true";
+  const chunksTable = assertSqlIdentifier(process.env.DORIS_CHUNKS_TABLE ?? "document_chunks");
 
   try {
     for (const statement of sql.split(";").map((part) => part.trim()).filter(Boolean)) {
       await pool.query(statement);
     }
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_document_chunks_content
+      ON ${chunksTable} (content)
+      USING INVERTED
+      PROPERTIES (
+        "parser" = "unicode"
+      )
+    `);
     if (enableAnnIndex) {
       await pool.query(`
         CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding
-        ON document_chunks (embedding)
+        ON ${chunksTable} (embedding)
         USING ANN
         PROPERTIES (
           "dim" = "${dim}",

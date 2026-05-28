@@ -33,7 +33,7 @@ export async function POST(request: Request) {
       organizationId: key.organizationId,
       userId: `api-key:${key.id}`,
       question: query,
-      metadata: { projectId: key.projectId, documentIds: documents.map((document) => document.id), topK, apiKeyId: key.id },
+      metadata: { projectId: key.projectId, documentIds: documents.map((document) => document.id), topK, apiKeyId: key.id, retrievalMode: "hybrid" },
     });
 
     const { answer, citations } = await runProjectSearch({

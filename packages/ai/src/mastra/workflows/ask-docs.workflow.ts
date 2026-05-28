@@ -29,6 +29,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       organizationId: input.organizationId,
       documentIds: input.documentIds,
       topK: input.topK,
+      retrievalMode: "hybrid",
     },
     tags: ["ask-ai", "litefuse"],
     attributes: {
@@ -41,6 +42,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       documentIds: input.documentIds,
       topK: input.topK,
       includeDebugChunks: input.includeDebugChunks,
+      retrievalMode: "hybrid",
     },
   });
   let chunks: RetrievedChunk[] = [];
@@ -68,6 +70,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         organizationId: input.organizationId,
         documentIds: input.documentIds,
         topK: input.topK,
+        retrievalMode: "hybrid",
       },
     });
 

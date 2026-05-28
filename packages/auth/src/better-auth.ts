@@ -7,6 +7,7 @@ import { loadEnv } from "./load-env";
 loadEnv();
 
 let db: ReturnType<typeof createDb> | undefined;
+let authInstance: ReturnType<typeof createAuth> | undefined;
 let initUserPromise: Promise<void> | undefined;
 
 function getAuthDb() {
@@ -14,42 +15,51 @@ function getAuthDb() {
   return db;
 }
 
-const socialProviders = {
-  ...(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
-    ? {
-        github: {
-          clientId: process.env.GITHUB_CLIENT_ID,
-          clientSecret: process.env.GITHUB_CLIENT_SECRET,
-        },
-      }
-    : {}),
-  ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
-    ? {
-        google: {
-          clientId: process.env.GOOGLE_CLIENT_ID,
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        },
-      }
-    : {}),
-};
+export function getAuth() {
+  authInstance ??= createAuth();
+  return authInstance;
+}
 
-export const auth = betterAuth({
-  secret: process.env.BETTER_AUTH_SECRET ?? "dev-only-change-me-dev-only-change-me-000000",
-  baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
-  database: drizzleAdapter(getAuthDb(), {
-    provider: "pg",
-    schema: {
-      user,
-      session,
-      account,
-      verification,
+function createAuth() {
+  return betterAuth({
+    secret: process.env.BETTER_AUTH_SECRET ?? "dev-only-change-me-dev-only-change-me-000000",
+    baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+    database: drizzleAdapter(getAuthDb(), {
+      provider: "pg",
+      schema: {
+        user,
+        session,
+        account,
+        verification,
+      },
+    }),
+    emailAndPassword: {
+      enabled: true,
     },
-  }),
-  emailAndPassword: {
-    enabled: true,
-  },
-  socialProviders,
-});
+    socialProviders: getSocialProviders(),
+  });
+}
+
+function getSocialProviders() {
+  return {
+    ...(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
+      ? {
+          github: {
+            clientId: process.env.GITHUB_CLIENT_ID,
+            clientSecret: process.env.GITHUB_CLIENT_SECRET,
+          },
+        }
+      : {}),
+    ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+      ? {
+          google: {
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+          },
+        }
+      : {}),
+  };
+}
 
 export function ensureInitUser() {
   initUserPromise ??= createInitUser().catch((error) => {
@@ -76,7 +86,7 @@ async function createInitUser() {
 
   if (!userId) {
     userId = (
-      await auth.api.signUpEmail({
+      await getAuth().api.signUpEmail({
         body: {
           name: process.env.INIT_USER_NAME?.trim() || email.split("@")[0] || email,
           email,

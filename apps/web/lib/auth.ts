@@ -1,11 +1,11 @@
-import { auth, getRequestContextFromHeaders } from "@selectdb/auth";
+import { getAuth, getRequestContextFromHeaders } from "@selectdb/auth";
 import { member } from "@selectdb/db";
 import { UnauthorizedError, type RequestContext } from "@selectdb/shared";
 import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "./runtime";
 
 export async function getAuthSession(headers: Headers) {
-  return auth.api.getSession({ headers });
+  return getAuth().api.getSession({ headers });
 }
 
 export async function getRequestContext(headers: Headers): Promise<RequestContext> {

@@ -5,6 +5,7 @@ import { rerankChunks } from "./rerank";
 export interface Retriever {
   search(input: {
     organizationId: string;
+    query: string;
     queryEmbedding: number[];
     topK: number;
     documentIds?: string[];
@@ -23,6 +24,7 @@ export async function retrieveRelevantChunks(input: {
   if (!queryEmbedding) return [];
   const chunks = await input.retriever.search({
     organizationId: input.organizationId,
+    query: input.question,
     queryEmbedding,
     topK: input.topK ?? 8,
     documentIds: input.documentIds,

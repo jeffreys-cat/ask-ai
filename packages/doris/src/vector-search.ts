@@ -6,6 +6,7 @@ export async function searchDocumentChunks(
   pool: DorisPool,
   input: {
     organizationId: string;
+    query: string;
     queryEmbedding: number[];
     topK: number;
     documentIds?: string[];

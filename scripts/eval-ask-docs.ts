@@ -138,6 +138,7 @@ function createAskDocsTask(input: {
         projectId: item.input.projectId,
         documentIds,
         topK: item.input.topK ?? input.defaultTopK,
+        retrievalMode: "hybrid",
         tags: item.metadata?.tags,
       },
     });

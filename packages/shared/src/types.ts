@@ -25,6 +25,14 @@ export interface DocumentChunk {
 
 export interface RetrievedChunk extends Omit<DocumentChunk, "embedding"> {
   score: number;
+  retrieval?: {
+    mode: "hybrid";
+    vectorScore?: number;
+    keywordScore?: number;
+    vectorRank?: number;
+    keywordRank?: number;
+    matchedBy: Array<"vector" | "keyword">;
+  };
 }
 
 export interface Citation {
