@@ -1,5 +1,5 @@
 import { SpanType } from "@mastra/core/observability";
-import type { AskAgentInput, AskStreamEvent, Citation, RetrievedChunk } from "@selectdb/shared";
+import type { AccessContext, AskAgentInput, AskStreamEvent, Citation, MetadataFilters, RetrievedChunk } from "@selectdb/shared";
 import { buildCitations, packContext, retrieveRelevantChunks, type EmbeddingProvider, type Retriever } from "@selectdb/rag";
 import { mastra } from "../index";
 import { buildDocAnswerMessages } from "../agents/doc-answer.agent";
@@ -11,6 +11,8 @@ export interface AskDocsWorkflowInput {
   retriever: Retriever;
   embeddings: EmbeddingProvider;
   documentIds?: string[];
+  filters?: MetadataFilters;
+  accessContext?: AccessContext;
   topK?: number;
   includeDebugChunks?: boolean;
   agent?: AskAgentInput;
@@ -28,8 +30,9 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       question: input.question,
       organizationId: input.organizationId,
       documentIds: input.documentIds,
+      filters: input.filters,
       topK: input.topK,
-      retrievalMode: "hybrid",
+      retrievalMode: "hybrid+metadata_filters",
     },
     tags: ["ask-ai", "litefuse"],
     attributes: {
@@ -40,9 +43,10 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     metadata: {
       organizationId: input.organizationId,
       documentIds: input.documentIds,
+      filters: input.filters,
       topK: input.topK,
       includeDebugChunks: input.includeDebugChunks,
-      retrievalMode: "hybrid",
+      retrievalMode: "hybrid+metadata_filters",
     },
   });
   let chunks: RetrievedChunk[] = [];
@@ -58,6 +62,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         question: input.question,
         organizationId: input.organizationId,
         documentIds: input.documentIds,
+        filters: input.filters,
         topK: input.topK,
       },
       attributes: {
@@ -69,8 +74,9 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       metadata: {
         organizationId: input.organizationId,
         documentIds: input.documentIds,
+        filters: input.filters,
         topK: input.topK,
-        retrievalMode: "hybrid",
+        retrievalMode: "hybrid+metadata_filters",
       },
     });
 
@@ -82,6 +88,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         question: input.question,
         topK: input.topK,
         documentIds: input.documentIds,
+        filters: input.filters,
+        accessContext: input.accessContext,
       });
       retrievalSpan?.end({
         output: {

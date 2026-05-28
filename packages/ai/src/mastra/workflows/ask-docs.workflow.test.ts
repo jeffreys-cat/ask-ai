@@ -30,18 +30,27 @@ describe("runAskDocsWorkflow", () => {
       },
     ];
 
+    const search = vi.fn(async () => chunks);
     const events = [];
     for await (const event of runAskDocsWorkflow({
       organizationId: "org-1",
       question: "Which config keys are required?",
-      retriever: { search: async () => chunks },
+      retriever: { search },
       embeddings: { embed: async () => [[1, 0]] },
+      filters: { productLine: "cloud", publishedAt: { from: "2026-01-01T00:00:00.000Z" } },
+      accessContext: { userId: "user-1" },
       includeDebugChunks: true,
       chat: { baseUrl: "https://chat.test/v1", apiKey: "test-key", model: "test-model" },
     })) {
       events.push(event);
     }
 
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: { productLine: "cloud", publishedAt: { from: "2026-01-01T00:00:00.000Z" } },
+        accessContext: { userId: "user-1" },
+      }),
+    );
     expect(events.find((event) => event.type === "retrieved_chunks")).toMatchObject({ chunks });
     expect(events.find((event) => event.type === "citations")).toMatchObject({
       citations: [expect.objectContaining({ documentId: "doc-config" })],

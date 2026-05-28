@@ -10,6 +10,23 @@
 - 最终排序使用 RRF 融合，默认 `rrfK = 60`，以 `documentId + chunkId` 去重。
 - `RetrievedChunk.score` 表示最终融合分数，不再表示单一路径的向量相似度。
 - debug chunks 会带上可选 `retrieval` 字段，显示向量/BM25 原始分数、rank 和命中路径。
+- 检索支持可选元数据过滤：`version`、`language`、`productLine`、`publishedAt.from/to`。
+- 文档可见性由服务端身份控制：缺失或 `public` 可见，`restricted` 必须匹配 chunk metadata 中的 `allowedUserIds` 或 `allowedApiKeyIds`。
+
+外部 `/api/askai/search` 可传入过滤条件：
+
+```json
+{
+  "query": "How do I configure authentication?",
+  "topK": 8,
+  "filters": {
+    "version": ["3.0"],
+    "language": "zh-CN",
+    "productLine": "cloud",
+    "publishedAt": { "from": "2026-01-01", "to": "2026-05-28" }
+  }
+}
+```
 
 ## Doris 初始化
 

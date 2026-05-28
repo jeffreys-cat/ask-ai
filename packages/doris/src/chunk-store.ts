@@ -1,4 +1,4 @@
-import type { DocumentChunk, RetrievedChunk } from "@selectdb/shared";
+import type { AccessContext, DocumentChunk, MetadataFilters, RetrievedChunk } from "@selectdb/shared";
 import { createLogger, serializeError } from "@selectdb/logger";
 import type { DorisPool } from "./client";
 import { assertSqlIdentifier, vectorLiteral } from "./client";
@@ -13,6 +13,8 @@ export interface SearchChunksInput {
   queryEmbedding: number[];
   topK: number;
   documentIds?: string[];
+  filters?: MetadataFilters;
+  accessContext?: AccessContext;
 }
 
 type RetrievalBranch = "vector" | "keyword";
@@ -94,11 +96,7 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
     async searchChunks(input: SearchChunksInput): Promise<RetrievedChunk[]> {
       const topK = normalizeTopK(input.topK);
       const candidateK = normalizeCandidateK(topK);
-      const documentFilter =
-        input.documentIds && input.documentIds.length > 0
-          ? `AND document_id IN (${input.documentIds.map(() => "?").join(",")})`
-          : "";
-      const params = [input.organizationId, ...(input.documentIds ?? [])];
+      const predicate = buildSearchPredicate(input);
 
       const [vectorRows] = await withDorisRetry(
         () =>
@@ -113,11 +111,10 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
                 metadata,
                 INNER_PRODUCT(embedding, ${vectorLiteral(input.queryEmbedding)}) AS vectorScore
              FROM ${table}
-             WHERE organization_id = ?
-             ${documentFilter}
+             WHERE ${predicate.clause}
              ORDER BY vectorScore DESC
              LIMIT ${candidateK}`,
-            params,
+            predicate.params,
           ),
         log,
         {
@@ -126,6 +123,7 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
           topK,
           candidateK,
           documentIdCount: input.documentIds?.length ?? 0,
+          hasFilters: hasMetadataFilters(input.filters),
         },
       );
 
@@ -147,12 +145,11 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
                   metadata,
                   score() AS keywordScore
                FROM ${table}
-               WHERE organization_id = ?
-               ${documentFilter}
+               WHERE ${predicate.clause}
                AND content MATCH_ANY ?
                ORDER BY keywordScore DESC
                LIMIT ${candidateK}`,
-              [...params, keywordQuery],
+              [...predicate.params, keywordQuery],
             ),
           log,
           {
@@ -161,6 +158,7 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
             topK,
             candidateK,
             documentIdCount: input.documentIds?.length ?? 0,
+            hasFilters: hasMetadataFilters(input.filters),
           },
         );
         const keywordCandidates = mapSearchRows(keywordRows as Array<Record<string, unknown>>, "keywordScore");
@@ -172,12 +170,95 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
           topK,
           candidateK,
           documentIdCount: input.documentIds?.length ?? 0,
+          hasFilters: hasMetadataFilters(input.filters),
           error: serializeError(error),
         });
         return fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK });
       }
     },
   };
+}
+
+function buildSearchPredicate(input: SearchChunksInput) {
+  const clauses: string[] = ["organization_id = ?"];
+  const params: string[] = [input.organizationId];
+
+  if (input.documentIds && input.documentIds.length > 0) {
+    clauses.push(`document_id IN (${input.documentIds.map(() => "?").join(",")})`);
+    params.push(...input.documentIds);
+  }
+
+  addMetadataStringFilter(clauses, params, "version", input.filters?.version);
+  addMetadataStringFilter(clauses, params, "language", input.filters?.language);
+  addMetadataStringFilter(clauses, params, "productLine", input.filters?.productLine);
+
+  const publishedAt = input.filters?.publishedAt;
+  if (publishedAt?.from) {
+    clauses.push(`${metadataString("publishedAt")} >= ?`);
+    params.push(publishedAt.from);
+  }
+  if (publishedAt?.to) {
+    clauses.push(`${metadataString("publishedAt")} <= ?`);
+    params.push(publishedAt.to);
+  }
+
+  addAccessFilter(clauses, params, input.accessContext);
+
+  return {
+    clause: clauses.join("\n               AND "),
+    params,
+  };
+}
+
+function addMetadataStringFilter(clauses: string[], params: string[], field: "version" | "language" | "productLine", value?: string | string[]) {
+  const values = normalizeFilterValues(value);
+  if (values.length === 0) return;
+
+  if (values.length === 1) {
+    clauses.push(`${metadataString(field)} = ?`);
+    params.push(values[0]!);
+    return;
+  }
+
+  clauses.push(`${metadataString(field)} IN (${values.map(() => "?").join(",")})`);
+  params.push(...values);
+}
+
+function addAccessFilter(clauses: string[], params: string[], accessContext?: AccessContext) {
+  const visibility = metadataString("visibility");
+  const allowClauses: string[] = [];
+
+  if (accessContext?.userId) {
+    allowClauses.push("JSON_CONTAINS(metadata, ?, '$.allowedUserIds')");
+    params.push(JSON.stringify(accessContext.userId));
+  }
+  if (accessContext?.apiKeyId) {
+    allowClauses.push("JSON_CONTAINS(metadata, ?, '$.allowedApiKeyIds')");
+    params.push(JSON.stringify(accessContext.apiKeyId));
+  }
+
+  clauses.push(
+    `(${visibility} IS NULL OR ${visibility} = '' OR ${visibility} = 'public' OR (${visibility} = 'restricted' AND (${allowClauses.join(" OR ") || "FALSE"})))`,
+  );
+}
+
+function metadataString(field: "version" | "language" | "productLine" | "publishedAt" | "visibility") {
+  return `JSON_EXTRACT_STRING(metadata, '$.${field}')`;
+}
+
+function normalizeFilterValues(value?: string | string[]) {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return values.map((item) => item.trim()).filter(Boolean);
+}
+
+function hasMetadataFilters(filters?: MetadataFilters) {
+  return Boolean(
+    normalizeFilterValues(filters?.version).length ||
+      normalizeFilterValues(filters?.language).length ||
+      normalizeFilterValues(filters?.productLine).length ||
+      filters?.publishedAt?.from ||
+      filters?.publishedAt?.to,
+  );
 }
 
 function mapSearchRows(rows: Array<Record<string, unknown>>, scoreField: "vectorScore" | "keywordScore"): SearchCandidate[] {

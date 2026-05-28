@@ -5,6 +5,7 @@ import { mastra, runAskDocsWorkflow } from "@selectdb/ai";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
 import { BadRequestError, type AskStreamEvent } from "@selectdb/shared";
 import { getPublicRequestContext } from "../../../lib/auth";
+import { parseMetadataFilters } from "../../../lib/metadata-filters";
 import { getDb, getDoris } from "../../../lib/runtime";
 
 export async function POST(request: Request) {
@@ -19,9 +20,11 @@ export async function POST(request: Request) {
       includeDebugChunks?: boolean;
       agentId?: string;
       sessionId?: string;
+      filters?: unknown;
     };
     const question = body.question?.trim() || getLatestUserText(body.messages);
     const agent = resolveAskAgent(body.agentId);
+    const filters = parseMetadataFilters(body.filters);
 
     if (!question) throw new BadRequestError("question is required");
 
@@ -45,7 +48,7 @@ export async function POST(request: Request) {
         organizationId: ctx.organizationId,
         userId: ctx.userId,
         question,
-        metadata: { projectId: body.projectId, documentIds, topK: body.topK, retrievalMode: "hybrid" },
+        metadata: { projectId: body.projectId, documentIds, topK: body.topK, filters, retrievalMode: "hybrid+metadata_filters" },
       });
     }
 
@@ -68,6 +71,8 @@ export async function POST(request: Request) {
           },
           embeddings: embeddingProviderFromEnv(),
           documentIds,
+          filters,
+          accessContext: { userId: ctx.userId },
           topK: body.topK,
           includeDebugChunks: body.includeDebugChunks,
           agent,

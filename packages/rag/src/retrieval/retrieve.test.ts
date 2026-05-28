@@ -21,6 +21,8 @@ describe("retrieveRelevantChunks", () => {
       question: "What does hybrid search combine?",
       topK: 12,
       documentIds: ["doc-1"],
+      filters: { version: "3.0", language: ["en", "zh-CN"] },
+      accessContext: { userId: "user-1" },
     });
 
     expect(search).toHaveBeenCalledWith({
@@ -29,6 +31,8 @@ describe("retrieveRelevantChunks", () => {
       queryEmbedding: [1, 0],
       topK: 12,
       documentIds: ["doc-1"],
+      filters: { version: "3.0", language: ["en", "zh-CN"] },
+      accessContext: { userId: "user-1" },
     });
     expect(chunks).toHaveLength(1);
   });

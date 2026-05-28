@@ -1,4 +1,4 @@
-import type { RetrievedChunk } from "@selectdb/shared";
+import type { AccessContext, MetadataFilters, RetrievedChunk } from "@selectdb/shared";
 import type { DorisPool } from "./client";
 import { createChunkStore } from "./chunk-store";
 
@@ -10,6 +10,8 @@ export async function searchDocumentChunks(
     queryEmbedding: number[];
     topK: number;
     documentIds?: string[];
+    filters?: MetadataFilters;
+    accessContext?: AccessContext;
   },
 ): Promise<RetrievedChunk[]> {
   return createChunkStore(pool).searchChunks(input);

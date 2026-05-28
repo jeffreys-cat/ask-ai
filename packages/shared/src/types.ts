@@ -12,6 +12,21 @@ export interface RequestContext {
   organizationId: string;
 }
 
+export interface MetadataFilters {
+  version?: string | string[];
+  language?: string | string[];
+  productLine?: string | string[];
+  publishedAt?: {
+    from?: string;
+    to?: string;
+  };
+}
+
+export interface AccessContext {
+  userId?: string;
+  apiKeyId?: string;
+}
+
 export interface DocumentChunk {
   organizationId: string;
   documentId: string;

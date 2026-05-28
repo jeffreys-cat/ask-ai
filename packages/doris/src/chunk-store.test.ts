@@ -100,4 +100,53 @@ describe("hybrid chunk retrieval", () => {
       warn.mockRestore();
     }
   });
+
+  it("applies metadata and access filters to vector and keyword branches", async () => {
+    const execute = vi.fn().mockResolvedValue([[]]);
+    const store = createChunkStore({ execute } as never);
+
+    await store.searchChunks({
+      organizationId: "org-1",
+      query: "cloud auth",
+      queryEmbedding: [1, 0],
+      topK: 8,
+      documentIds: ["doc-1", "doc-2"],
+      filters: {
+        version: ["3.0", "3.1"],
+        language: "zh-CN",
+        productLine: "cloud",
+        publishedAt: { from: "2026-01-01T00:00:00.000Z", to: "2026-05-28T23:59:59.999Z" },
+      },
+      accessContext: { userId: "user-1", apiKeyId: "key-1" },
+    });
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    const [vectorSql, vectorParams] = execute.mock.calls[0] as [string, string[]];
+    const [keywordSql, keywordParams] = execute.mock.calls[1] as [string, string[]];
+
+    expect(vectorSql).toContain("document_id IN (?,?)");
+    expect(vectorSql).toContain("JSON_EXTRACT_STRING(metadata, '$.version') IN (?,?)");
+    expect(vectorSql).toContain("JSON_EXTRACT_STRING(metadata, '$.language') = ?");
+    expect(vectorSql).toContain("JSON_EXTRACT_STRING(metadata, '$.productLine') = ?");
+    expect(vectorSql).toContain("JSON_EXTRACT_STRING(metadata, '$.publishedAt') >= ?");
+    expect(vectorSql).toContain("JSON_EXTRACT_STRING(metadata, '$.publishedAt') <= ?");
+    expect(vectorSql).toContain("JSON_CONTAINS(metadata, ?, '$.allowedUserIds')");
+    expect(vectorSql).toContain("JSON_CONTAINS(metadata, ?, '$.allowedApiKeyIds')");
+    expect(keywordSql).toContain("content MATCH_ANY ?");
+    expect(keywordSql).toContain("JSON_EXTRACT_STRING(metadata, '$.version') IN (?,?)");
+    expect(vectorParams).toEqual([
+      "org-1",
+      "doc-1",
+      "doc-2",
+      "3.0",
+      "3.1",
+      "zh-CN",
+      "cloud",
+      "2026-01-01T00:00:00.000Z",
+      "2026-05-28T23:59:59.999Z",
+      "\"user-1\"",
+      "\"key-1\"",
+    ]);
+    expect(keywordParams).toEqual([...vectorParams, "cloud auth"]);
+  });
 });

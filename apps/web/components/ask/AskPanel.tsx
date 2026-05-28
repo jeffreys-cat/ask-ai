@@ -16,11 +16,12 @@ import {
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
+  SlidersHorizontal,
 } from "lucide-react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { useChat } from "@ai-sdk/react";
 import { useEffect, useMemo, useState } from "react";
-import { ASK_DOC_ANSWER_AGENT, type Citation, type RetrievedChunk } from "@selectdb/shared";
+import { ASK_DOC_ANSWER_AGENT, type Citation, type MetadataFilters, type RetrievedChunk } from "@selectdb/shared";
 import { cn } from "@/lib/utils";
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
@@ -36,6 +37,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -78,6 +80,21 @@ type AskDataParts = {
 type AskMessage = UIMessage<unknown, AskDataParts>;
 
 const transport = new DefaultChatTransport<AskMessage>({ api: "/api/ask" });
+const allOptionValue = "__all__";
+const emptyFilterForm = {
+  version: "",
+  language: "",
+  productLine: "",
+  publishedFrom: "",
+  publishedTo: "",
+};
+
+type AskFilterForm = typeof emptyFilterForm;
+type MetadataFilterOptions = {
+  versions: string[];
+  languages: string[];
+  productLines: string[];
+};
 
 export function AskPanel({ projectId, className }: { projectId?: string; className?: string }) {
   const isProjectScoped = Boolean(projectId);
@@ -94,6 +111,8 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(false);
   const [isEvidenceOpen, setIsEvidenceOpen] = useState(false);
+  const [filterForm, setFilterForm] = useState<AskFilterForm>(emptyFilterForm);
+  const [filterOptions, setFilterOptions] = useState<MetadataFilterOptions>({ versions: [], languages: [], productLines: [] });
 
   const { messages, sendMessage, stop, status, error, setMessages } = useChat<AskMessage>({
     transport,
@@ -128,6 +147,8 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
     ?.parts.filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
+  const metadataFilters = useMemo(() => buildMetadataFilters(filterForm), [filterForm]);
+  const activeFilterCount = useMemo(() => countActiveFilters(filterForm), [filterForm]);
 
   useEffect(() => {
     void loadProjects();
@@ -136,6 +157,7 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
   useEffect(() => {
     if (!selectedProjectId) return;
     void loadSessions(selectedProjectId);
+    void loadMetadataFilterOptions(selectedProjectId);
   }, [selectedProjectId]);
 
   async function loadProjects() {
@@ -180,6 +202,7 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
           projectId: selectedProjectId,
           sessionId: selectedSessionId || undefined,
           topK: 8,
+          filters: metadataFilters,
           includeDebugChunks: showContext,
         },
       },
@@ -217,6 +240,21 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
       setSessions([]);
     } finally {
       setIsLoadingSessions(false);
+    }
+  }
+
+  async function loadMetadataFilterOptions(activeProjectId: string) {
+    try {
+      const response = await fetch(`/api/projects/${activeProjectId}/metadata-options`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      const payload = (await response.json()) as MetadataFilterOptions;
+      setFilterOptions({
+        versions: payload.versions ?? [],
+        languages: payload.languages ?? [],
+        productLines: payload.productLines ?? [],
+      });
+    } catch {
+      setFilterOptions({ versions: [], languages: [], productLines: [] });
     }
   }
 
@@ -467,7 +505,12 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
                 <AskPromptInput
                   canAsk={canAsk}
                   includeDebugChunks={showContext}
+                  filterForm={filterForm}
+                  filterOptions={filterOptions}
+                  activeFilterCount={activeFilterCount}
                   onIncludeDebugChunksChange={setShowContext}
+                  onFilterChange={(key, value) => setFilterForm((current) => ({ ...current, [key]: value }))}
+                  onClearFilters={() => setFilterForm(emptyFilterForm)}
                   onSubmit={submitQuestion}
                   onStop={stop}
                   status={status}
@@ -645,14 +688,24 @@ function SuggestedQuestionGrid() {
 function AskPromptInput({
   canAsk,
   includeDebugChunks,
+  filterForm,
+  filterOptions,
+  activeFilterCount,
   onIncludeDebugChunksChange,
+  onFilterChange,
+  onClearFilters,
   onSubmit,
   onStop,
   status,
 }: {
   canAsk: boolean;
   includeDebugChunks: boolean;
+  filterForm: AskFilterForm;
+  filterOptions: MetadataFilterOptions;
+  activeFilterCount: number;
   onIncludeDebugChunksChange: (value: boolean) => void;
+  onFilterChange: (key: keyof AskFilterForm, value: string) => void;
+  onClearFilters: () => void;
   onSubmit: (text: string) => Promise<void>;
   onStop: () => Promise<void>;
   status: ReturnType<typeof useChat<AskMessage>>["status"];
@@ -662,30 +715,163 @@ function AskPromptInput({
   const isBusy = status === "submitted" || status === "streaming";
 
   return (
-    <PromptInput
-      onSubmit={({ text }) => {
-        const submitted = onSubmit(text);
-        textInput.clear();
-        return submitted;
-      }}
-    >
-      <PromptInputTextarea placeholder="Ask about configuration, APIs, setup steps, or anything in this project..." />
-      <PromptInputFooter>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={includeDebugChunks}
-            onChange={(event) => onIncludeDebugChunksChange(event.target.checked)}
-          />
-          Stream retrieved chunks
-        </label>
-        <PromptInputTools className="justify-end">
-          <PromptInputSubmit disabled={(!canAsk || !hasText) && !isBusy} onStop={onStop} status={status} />
-        </PromptInputTools>
-      </PromptInputFooter>
-    </PromptInput>
+    <div className="grid gap-3">
+      <AskFilterControls
+        filters={filterForm}
+        options={filterOptions}
+        activeFilterCount={activeFilterCount}
+        disabled={isBusy}
+        onChange={onFilterChange}
+        onClear={onClearFilters}
+      />
+      <PromptInput
+        onSubmit={({ text }) => {
+          const submitted = onSubmit(text);
+          textInput.clear();
+          return submitted;
+        }}
+      >
+        <PromptInputTextarea placeholder="Ask about configuration, APIs, setup steps, or anything in this project..." />
+        <PromptInputFooter>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-4 accent-primary"
+              checked={includeDebugChunks}
+              onChange={(event) => onIncludeDebugChunksChange(event.target.checked)}
+            />
+            Stream retrieved chunks
+          </label>
+          <PromptInputTools className="justify-end">
+            <PromptInputSubmit disabled={(!canAsk || !hasText) && !isBusy} onStop={onStop} status={status} />
+          </PromptInputTools>
+        </PromptInputFooter>
+      </PromptInput>
+    </div>
   );
+}
+
+function AskFilterControls({
+  filters,
+  options,
+  activeFilterCount,
+  disabled,
+  onChange,
+  onClear,
+}: {
+  filters: AskFilterForm;
+  options: MetadataFilterOptions;
+  activeFilterCount: number;
+  disabled: boolean;
+  onChange: (key: keyof AskFilterForm, value: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <SlidersHorizontal className="size-4 text-primary" />
+          Metadata filters
+          {activeFilterCount > 0 ? <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">{activeFilterCount}</Badge> : null}
+        </div>
+        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onClear} disabled={disabled || activeFilterCount === 0}>
+          Clear
+        </Button>
+      </div>
+      <div className="grid gap-2 md:grid-cols-5">
+        <FilterSelect label="Version" value={filters.version} options={options.versions} disabled={disabled} onChange={(value) => onChange("version", value)} />
+        <FilterSelect label="Language" value={filters.language} options={options.languages} disabled={disabled} onChange={(value) => onChange("language", value)} />
+        <FilterInput label="Product line" value={filters.productLine} disabled={disabled} onChange={(value) => onChange("productLine", value)} />
+        <FilterInput label="Published from" type="date" value={filters.publishedFrom} disabled={disabled} onChange={(value) => onChange("publishedFrom", value)} />
+        <FilterInput label="Published to" type="date" value={filters.publishedTo} disabled={disabled} onChange={(value) => onChange("publishedTo", value)} />
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const effectiveOptions = value && !options.includes(value) ? [value, ...options] : options;
+
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <Select value={value || allOptionValue} onValueChange={(nextValue) => onChange(nextValue === allOptionValue ? "" : nextValue)} disabled={disabled || effectiveOptions.length === 0}>
+        <SelectTrigger className="h-8 bg-background text-xs">
+          <SelectValue placeholder={effectiveOptions.length > 0 ? `Any ${label.toLowerCase()}` : "No options"} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={allOptionValue}>Any {label.toLowerCase()}</SelectItem>
+          {effectiveOptions.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </label>
+  );
+}
+
+function FilterInput({
+  label,
+  value,
+  type = "text",
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  type?: "text" | "date";
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-1.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <Input
+        type={type}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 text-xs"
+      />
+    </label>
+  );
+}
+
+function buildMetadataFilters(form: AskFilterForm): MetadataFilters | undefined {
+  const filters: MetadataFilters = {};
+  if (form.version.trim()) filters.version = splitFilterInput(form.version);
+  if (form.language.trim()) filters.language = splitFilterInput(form.language);
+  if (form.productLine.trim()) filters.productLine = splitFilterInput(form.productLine);
+  if (form.publishedFrom || form.publishedTo) {
+    filters.publishedAt = {
+      from: form.publishedFrom || undefined,
+      to: form.publishedTo || undefined,
+    };
+  }
+  return countActiveFilters(form) > 0 ? filters : undefined;
+}
+
+function splitFilterInput(value: string) {
+  const items = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return items.length <= 1 ? items[0] : items;
+}
+
+function countActiveFilters(form: AskFilterForm) {
+  return [form.version, form.language, form.productLine, form.publishedFrom, form.publishedTo].filter((value) => value.trim()).length;
 }
 
 function AskMessageView({ message }: { message: AskMessage }) {

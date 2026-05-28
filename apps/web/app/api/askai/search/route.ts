@@ -3,15 +3,17 @@ import { runAskDocsWorkflow, mastra } from "@selectdb/ai";
 import { createAskRepo, createDocumentsRepo, createProjectApiKeysRepo, createProjectsRepo, hashProjectApiKey, isProjectApiKey } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
-import { BadRequestError, UnauthorizedError, type AskStreamEvent } from "@selectdb/shared";
+import { BadRequestError, UnauthorizedError, type AskStreamEvent, type MetadataFilters } from "@selectdb/shared";
+import { parseMetadataFilters } from "../../../../lib/metadata-filters";
 import { getDb, getDoris } from "../../../../lib/runtime";
 
 export async function POST(request: Request) {
   try {
     const apiKey = getBearerToken(request.headers);
-    const body = (await request.json()) as { query?: string; topK?: number };
+    const body = (await request.json()) as { query?: string; topK?: number; filters?: unknown };
     const query = body.query?.trim();
     const topK = body.topK ?? 8;
+    const filters = parseMetadataFilters(body.filters);
 
     if (!query) throw new BadRequestError("query is required");
     if (!Number.isInteger(topK) || topK <= 0 || topK > 50) throw new BadRequestError("topK must be an integer between 1 and 50");
@@ -33,7 +35,14 @@ export async function POST(request: Request) {
       organizationId: key.organizationId,
       userId: `api-key:${key.id}`,
       question: query,
-      metadata: { projectId: key.projectId, documentIds: documents.map((document) => document.id), topK, apiKeyId: key.id, retrievalMode: "hybrid" },
+      metadata: {
+        projectId: key.projectId,
+        documentIds: documents.map((document) => document.id),
+        topK,
+        filters,
+        apiKeyId: key.id,
+        retrievalMode: "hybrid+metadata_filters",
+      },
     });
 
     const { answer, citations } = await runProjectSearch({
@@ -41,6 +50,8 @@ export async function POST(request: Request) {
       projectId: key.projectId,
       query,
       topK,
+      filters,
+      apiKeyId: key.id,
       documentIds: documents.map((document) => document.id),
     });
     await askRepo.completeSession({ sessionId, answer, citations });
@@ -66,6 +77,8 @@ async function runProjectSearch(input: {
   projectId: string;
   query: string;
   topK: number;
+  filters?: MetadataFilters;
+  apiKeyId: string;
   documentIds: string[];
 }) {
   let answer = "";
@@ -79,6 +92,8 @@ async function runProjectSearch(input: {
     },
     embeddings: embeddingProviderFromEnv(),
     documentIds: input.documentIds,
+    filters: input.filters,
+    accessContext: { apiKeyId: input.apiKeyId },
     topK: input.topK,
     includeDebugChunks: false,
     agent: mastra.agents.docAnswerAgent,

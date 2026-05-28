@@ -120,7 +120,7 @@ async function processJob(input: {
       mimeType: sourceKind === "web_url" ? source.mimeType : mimeType,
       title: titleFromSourcePath(sourcePath),
       sourceUri: sourceKind === "web_url" ? source.finalUrl : sourcePath,
-      metadata: { projectId, sourcePath, sourceKind: sourceKind === "web_url" ? "web_url" : "project_file" },
+      metadata: { ...metadata, projectId, sourcePath, sourceKind: sourceKind === "web_url" ? "web_url" : "project_file" },
       db: input.db,
       doris: input.doris,
     });
