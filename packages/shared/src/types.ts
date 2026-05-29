@@ -58,6 +58,53 @@ export interface RetrievedChunk extends Omit<DocumentChunk, "embedding"> {
   };
 }
 
+export interface RetrievalTraceCandidate {
+  documentId: string;
+  chunkId: string;
+  rank: number;
+  score: number;
+  title?: string;
+  sourceUri?: string;
+  vectorScore?: number;
+  keywordScore?: number;
+  vectorRank?: number;
+  keywordRank?: number;
+  fusionScore?: number;
+  fusionRank?: number;
+  matchedBy?: Array<"vector" | "keyword">;
+}
+
+export type RetrievalTraceEvent =
+  | {
+      type: "vector_candidates";
+      topK: number;
+      candidateK: number;
+      returnedCount: number;
+      latencyMs: number;
+      candidates: RetrievalTraceCandidate[];
+    }
+  | {
+      type: "keyword_candidates";
+      query: string;
+      topK: number;
+      candidateK: number;
+      returnedCount: number;
+      latencyMs: number;
+      fallback?: boolean;
+      error?: string;
+      candidates: RetrievalTraceCandidate[];
+    }
+  | {
+      type: "rrf_fusion";
+      topK: number;
+      rrfK: number;
+      vectorCount: number;
+      keywordCount: number;
+      overlapCount: number;
+      returnedCount: number;
+      candidates: RetrievalTraceCandidate[];
+    };
+
 export interface Citation {
   id: string;
   documentId: string;

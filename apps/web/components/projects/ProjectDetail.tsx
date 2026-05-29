@@ -49,18 +49,18 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
         view === "ask" ? "h-screen min-h-0 max-w-none gap-4 overflow-hidden px-4 py-6 lg:px-6" : "max-w-5xl",
       )}
     >
-      <header className="shrink-0">
-        <div className="min-w-0">
-          {view === "ask" ? (
-            <h1 className="truncate text-3xl font-semibold tracking-tight">Ask AI</h1>
-          ) : isLoading ? (
-            <Skeleton className="h-8 w-64" />
-          ) : (
-            <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
-          )}
-          {view === "ask" ? null : <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>}
-        </div>
-      </header>
+      {view === "ask" ? null : (
+        <header className="shrink-0">
+          <div className="min-w-0">
+            {isLoading ? (
+              <Skeleton className="h-8 w-64" />
+            ) : (
+              <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
+            )}
+            <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>
+          </div>
+        </header>
+      )}
 
       <div className="flex gap-2 md:hidden">
         <Button asChild variant={view === "overview" ? "default" : "outline"} size="sm">
@@ -77,7 +77,7 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
         </Button>
       </div>
 
-      <Separator className="shrink-0" />
+      {view === "ask" ? null : <Separator className="shrink-0" />}
 
       {error ? (
         <Alert variant="destructive">

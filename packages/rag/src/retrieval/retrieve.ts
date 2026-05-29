@@ -1,4 +1,4 @@
-import type { AccessContext, MetadataFilters, RetrievedChunk } from "@selectdb/shared";
+import type { AccessContext, MetadataFilters, RetrievalTraceEvent, RetrievedChunk } from "@selectdb/shared";
 import type { EmbeddingProvider } from "../embedding";
 import { normalizeRerankCandidateK, rerankChunks, type Reranker } from "./rerank";
 
@@ -12,6 +12,7 @@ export interface Retriever {
     documentIds?: string[];
     filters?: MetadataFilters;
     accessContext?: AccessContext;
+    onRetrievalTrace?: (event: RetrievalTraceEvent) => void;
   }): Promise<RetrievedChunk[]>;
 }
 
@@ -24,6 +25,7 @@ export async function retrieveRelevantChunks(input: {
   documentIds?: string[];
   filters?: MetadataFilters;
   accessContext?: AccessContext;
+  onRetrievalTrace?: (event: RetrievalTraceEvent) => void;
   reranker?: Reranker;
   candidateK?: number;
   rerankFailOpen?: boolean;
@@ -54,6 +56,7 @@ export async function retrieveChunkCandidates(input: {
   documentIds?: string[];
   filters?: MetadataFilters;
   accessContext?: AccessContext;
+  onRetrievalTrace?: (event: RetrievalTraceEvent) => void;
 }): Promise<RetrievedChunk[]> {
   const [queryEmbedding] = await input.embeddings.embed([input.question]);
   if (!queryEmbedding) return [];
@@ -67,6 +70,7 @@ export async function retrieveChunkCandidates(input: {
     accessContext: input.accessContext,
   };
   if (input.candidateK !== undefined) searchInput.candidateK = input.candidateK;
+  if (input.onRetrievalTrace) searchInput.onRetrievalTrace = input.onRetrievalTrace;
   return input.retriever.search(searchInput);
 }
 

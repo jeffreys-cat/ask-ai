@@ -8,6 +8,11 @@ export interface RerankResult {
 export interface Reranker {
   provider: string;
   model: string;
+  observability?: {
+    endpoint?: string;
+    timeoutMs?: number;
+    maxDocChars?: number;
+  };
   rerank(input: {
     query: string;
     chunks: RetrievedChunk[];
@@ -163,6 +168,11 @@ function createHttpReranker(input: { config: HttpRerankerConfig; spec: HttpReran
   return {
     provider: spec.provider,
     model,
+    observability: {
+      endpoint,
+      timeoutMs,
+      maxDocChars,
+    },
     async rerank(input) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);

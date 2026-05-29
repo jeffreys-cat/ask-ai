@@ -1,5 +1,5 @@
 import { SpanType } from "@mastra/core/observability";
-import type { AccessContext, AskAgentInput, AskStreamEvent, Citation, MetadataFilters, RetrievedChunk } from "@selectdb/shared";
+import type { AccessContext, AskAgentInput, AskStreamEvent, Citation, MetadataFilters, RetrievalTraceEvent, RetrievedChunk } from "@selectdb/shared";
 import {
   buildCitations,
   packContext,
@@ -76,6 +76,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     const retrievalSpan = rootSpan?.createChildSpan({
       name: "Retrieve document chunk candidates",
       type: SpanType.RAG_VECTOR_OPERATION,
+      entityId: "retrieve-docs",
+      entityName: "Retrieve document chunk candidates",
       input: {
         question: input.question,
         organizationId: input.organizationId,
@@ -99,6 +101,103 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
       },
     });
+    const retrievalTraceParent = retrievalSpan ?? rootSpan;
+    const recordRetrievalTrace = (event: RetrievalTraceEvent) => {
+      if (event.type === "vector_candidates") {
+        const span = retrievalTraceParent?.createChildSpan({
+          name: "Vector search candidates",
+          type: SpanType.RAG_VECTOR_OPERATION,
+          entityId: "vector-search",
+          entityName: "Vector search candidates",
+          input: { topK: event.topK, candidateK: event.candidateK },
+          attributes: {
+            operation: "query",
+            store: "doris-vector",
+            indexName: "document_chunks",
+            topK: event.topK,
+          },
+          metadata: {
+            retrievalStage: "vector",
+            candidateK: event.candidateK,
+            returnedCount: event.returnedCount,
+            latencyMs: event.latencyMs,
+          },
+        });
+        span?.end({
+          output: {
+            returnedCount: event.returnedCount,
+            latencyMs: event.latencyMs,
+            topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
+            candidates: event.candidates,
+          },
+        });
+        return;
+      }
+
+      if (event.type === "keyword_candidates") {
+        const span = retrievalTraceParent?.createChildSpan({
+          name: "BM25 keyword candidates",
+          type: SpanType.RAG_VECTOR_OPERATION,
+          entityId: "bm25-keyword-search",
+          entityName: "BM25 keyword candidates",
+          input: { query: event.query, topK: event.topK, candidateK: event.candidateK },
+          attributes: {
+            operation: "query",
+            store: "doris-bm25",
+            indexName: "document_chunks",
+            topK: event.topK,
+          },
+          metadata: {
+            retrievalStage: "bm25",
+            candidateK: event.candidateK,
+            returnedCount: event.returnedCount,
+            fallback: event.fallback,
+            error: event.error,
+            latencyMs: event.latencyMs,
+          },
+        });
+        span?.end({
+          output: {
+            returnedCount: event.returnedCount,
+            fallback: event.fallback,
+            error: event.error,
+            latencyMs: event.latencyMs,
+            topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
+            candidates: event.candidates,
+          },
+        });
+        return;
+      }
+
+      const span = retrievalTraceParent?.createChildSpan({
+        name: "RRF fusion",
+        type: SpanType.GENERIC,
+        entityId: "rrf-fusion",
+        entityName: "RRF fusion",
+        input: {
+          topK: event.topK,
+          rrfK: event.rrfK,
+          vectorCount: event.vectorCount,
+          keywordCount: event.keywordCount,
+          overlapCount: event.overlapCount,
+        },
+        metadata: {
+          retrievalStage: "rrf",
+          rrfK: event.rrfK,
+          vectorCount: event.vectorCount,
+          keywordCount: event.keywordCount,
+          overlapCount: event.overlapCount,
+          returnedCount: event.returnedCount,
+        },
+      });
+      span?.end({
+        output: {
+          returnedCount: event.returnedCount,
+          topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
+          candidates: event.candidates,
+        },
+      });
+    };
 
     try {
       chunks = await retrieveChunkCandidates({
@@ -111,6 +210,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         documentIds: input.documentIds,
         filters: input.filters,
         accessContext: input.accessContext,
+        onRetrievalTrace: recordRetrievalTrace,
       });
       retrievalSpan?.end({
         output: {
@@ -125,25 +225,36 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
 
     const rerankSpan = rootSpan?.createChildSpan({
       name: "Rerank document chunk candidates",
-      type: SpanType.RAG_VECTOR_OPERATION,
+      type: SpanType.RAG_ACTION,
+      entityId: "rerank-docs",
+      entityName: "Rerank document chunk candidates",
       input: {
         question: input.question,
         candidateCount: chunks.length,
+        candidateDocumentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
         topK,
-      },
-      attributes: {
-        operation: "query",
-        store: reranker?.provider ?? "none",
-        indexName: "document_chunks",
-        topK,
-      },
-      metadata: {
         provider: reranker?.provider ?? "none",
         model: reranker?.model,
+      },
+      attributes: {
+        action: "rerank",
+        candidateCount: chunks.length,
+        topN: topK,
+        scorer: reranker?.provider ?? "none",
+      },
+      metadata: {
+        operation: "rerank",
+        provider: reranker?.provider ?? "none",
+        model: reranker?.model,
+        endpoint: reranker?.observability?.endpoint,
+        timeoutMs: reranker?.observability?.timeoutMs,
+        maxDocChars: reranker?.observability?.maxDocChars,
+        candidateCount: chunks.length,
         topK,
         candidateK: rerankCandidateK,
         failOpen: rerankFailOpen,
         retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
+        enabled: Boolean(reranker),
       },
     });
 
@@ -164,6 +275,13 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
           fallback: result.fallback,
           error: result.error,
           latencyMs: elapsed(startedAt),
+          provider: reranker?.provider ?? "none",
+          model: reranker?.model,
+          topChunkIds: chunks.map((chunk) => chunk.chunkId),
+          topDocumentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
+          rerankScores: chunks
+            .map((chunk) => chunk.retrieval?.rerank?.score)
+            .filter((score): score is number => typeof score === "number"),
         },
       });
     } catch (error) {

@@ -2,7 +2,20 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ArrowLeft, Bot, ChevronUp, FileUp, FolderKanban, Home, KeyRound, LogOut, MessageSquareText, Settings } from "lucide-react";
+import {
+  ArrowLeft,
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  FileUp,
+  FolderKanban,
+  Home,
+  KeyRound,
+  LogOut,
+  MessageSquareText,
+  Settings,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   DropdownMenu,
@@ -23,6 +36,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
 } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 
@@ -35,47 +49,88 @@ export interface AppSidebarUser {
 export function AppSidebar({ user }: { user: AppSidebarUser }) {
   const pathname = usePathname();
   const projectId = useProjectId(pathname);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   return (
-    <Sidebar>
-      <SidebarHeader>
-        <Link href="/admin/projects" className="flex min-w-0 items-center gap-3 rounded-md px-1 py-1.5">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-            <Bot />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold">Ask AI</span>
-            <span className="block truncate text-xs text-muted-foreground">litefuse</span>
-          </span>
-        </Link>
+    <Sidebar className={cn("transition-[width] duration-200", isCollapsed && "w-16")}>
+      <SidebarHeader className={cn("p-4", isCollapsed && "p-3")}>
+        <div className={cn("flex items-center gap-2", isCollapsed ? "justify-center" : "justify-between")}>
+          <Link
+            href="/admin/projects"
+            className={cn("flex min-w-0 items-center gap-3 rounded-md px-1 py-1.5", isCollapsed && "justify-center px-0")}
+            aria-label="Projects"
+            title={isCollapsed ? "Ask AI" : undefined}
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <Bot />
+            </span>
+            <span className={cn("min-w-0", isCollapsed && "hidden")}>
+              <span className="block truncate text-sm font-semibold">Ask AI</span>
+              <span className="block truncate text-xs text-muted-foreground">litefuse</span>
+            </span>
+          </Link>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={cn(isCollapsed && "sr-only")}
+            onClick={() => setIsCollapsed((current) => !current)}
+            aria-label="Collapse app sidebar"
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+        </div>
+        {isCollapsed ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="mx-auto mt-3"
+            onClick={() => setIsCollapsed(false)}
+            aria-label="Expand app sidebar"
+            title="Expand app sidebar"
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        ) : null}
       </SidebarHeader>
 
-      <SidebarContent>
-        {projectId ? <ProjectNavigation projectId={projectId} pathname={pathname} /> : <WorkspaceNavigation pathname={pathname} />}
+      <SidebarContent className={cn(isCollapsed && "items-center px-2")}>
+        {projectId ? (
+          <ProjectNavigation projectId={projectId} pathname={pathname} isCollapsed={isCollapsed} />
+        ) : (
+          <WorkspaceNavigation pathname={pathname} isCollapsed={isCollapsed} />
+        )}
       </SidebarContent>
 
-      <SidebarFooter>
-        <UserMenu user={user} />
+      <SidebarFooter className={cn(isCollapsed && "p-2")}>
+        <UserMenu user={user} isCollapsed={isCollapsed} />
       </SidebarFooter>
     </Sidebar>
   );
 }
 
-function WorkspaceNavigation({ pathname }: { pathname: string }) {
+function WorkspaceNavigation({ pathname, isCollapsed }: { pathname: string; isCollapsed: boolean }) {
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-      <SidebarMenu>
-        <SidebarMenuButton href="/admin/projects" isActive={pathname.startsWith("/admin/projects")}>
+    <SidebarGroup className={cn(isCollapsed && "w-full items-center")}>
+      {isCollapsed ? null : <SidebarGroupLabel>Workspace</SidebarGroupLabel>}
+      <SidebarMenu className={cn(isCollapsed && "w-full place-items-center")}>
+        <SidebarMenuButton
+          href="/admin/projects"
+          isActive={pathname.startsWith("/admin/projects")}
+          className={collapsedMenuButtonClass(isCollapsed)}
+          aria-label="Projects"
+          title={isCollapsed ? "Projects" : undefined}
+        >
           <FolderKanban />
-          Projects
+          <span className={cn(isCollapsed && "hidden")}>Projects</span>
         </SidebarMenuButton>
       </SidebarMenu>
     </SidebarGroup>
   );
 }
 
-function ProjectNavigation({ projectId, pathname }: { projectId: string; pathname: string }) {
+function ProjectNavigation({ projectId, pathname, isCollapsed }: { projectId: string; pathname: string; isCollapsed: boolean }) {
   const [project, setProject] = useState<{ name?: string | null } | null>(null);
 
   useEffect(() => {
@@ -100,42 +155,71 @@ function ProjectNavigation({ projectId, pathname }: { projectId: string; pathnam
   }, [projectId]);
 
   return (
-    <SidebarGroup className="gap-4">
-      <SidebarMenu>
-        <SidebarMenuButton href="/admin/projects">
+    <SidebarGroup className={cn("gap-4", isCollapsed && "w-full items-center gap-3")}>
+      <SidebarMenu className={cn(isCollapsed && "w-full place-items-center")}>
+        <SidebarMenuButton
+          href="/admin/projects"
+          className={collapsedMenuButtonClass(isCollapsed)}
+          aria-label="Projects"
+          title={isCollapsed ? "Projects" : undefined}
+        >
           <ArrowLeft />
-          Projects
+          <span className={cn(isCollapsed && "hidden")}>Projects</span>
         </SidebarMenuButton>
       </SidebarMenu>
 
-      <div className="min-w-0 px-3">
+      <div className={cn("min-w-0 px-3", isCollapsed && "hidden")}>
         <p className="truncate text-sm font-semibold">{project?.name ?? "Project"}</p>
         <p className="mt-1 truncate text-xs text-muted-foreground">{projectId}</p>
       </div>
 
-      <SidebarMenu>
-        <SidebarMenuButton href={`/admin/projects/${projectId}`} isActive={pathname === `/admin/projects/${projectId}`}>
+      <SidebarMenu className={cn(isCollapsed && "w-full place-items-center")}>
+        <SidebarMenuButton
+          href={`/admin/projects/${projectId}`}
+          isActive={pathname === `/admin/projects/${projectId}`}
+          className={collapsedMenuButtonClass(isCollapsed)}
+          aria-label="Overview"
+          title={isCollapsed ? "Overview" : undefined}
+        >
           <Home />
-          Overview
+          <span className={cn(isCollapsed && "hidden")}>Overview</span>
         </SidebarMenuButton>
-        <SidebarMenuButton href={`/admin/projects/${projectId}/ingest`} isActive={pathname.startsWith(`/admin/projects/${projectId}/ingest`)}>
+        <SidebarMenuButton
+          href={`/admin/projects/${projectId}/ingest`}
+          isActive={pathname.startsWith(`/admin/projects/${projectId}/ingest`)}
+          className={collapsedMenuButtonClass(isCollapsed)}
+          aria-label="Ingest"
+          title={isCollapsed ? "Ingest" : undefined}
+        >
           <FileUp />
-          Ingest
+          <span className={cn(isCollapsed && "hidden")}>Ingest</span>
         </SidebarMenuButton>
-        <SidebarMenuButton href={`/admin/projects/${projectId}/ask`} isActive={pathname === `/admin/projects/${projectId}/ask`}>
+        <SidebarMenuButton
+          href={`/admin/projects/${projectId}/ask`}
+          isActive={pathname === `/admin/projects/${projectId}/ask`}
+          className={collapsedMenuButtonClass(isCollapsed)}
+          aria-label="Ask"
+          title={isCollapsed ? "Ask" : undefined}
+        >
           <MessageSquareText />
-          Ask
+          <span className={cn(isCollapsed && "hidden")}>Ask</span>
         </SidebarMenuButton>
-        <SidebarMenuButton href={`/admin/projects/${projectId}/api-keys`} isActive={pathname === `/admin/projects/${projectId}/api-keys`}>
+        <SidebarMenuButton
+          href={`/admin/projects/${projectId}/api-keys`}
+          isActive={pathname === `/admin/projects/${projectId}/api-keys`}
+          className={collapsedMenuButtonClass(isCollapsed)}
+          aria-label="API keys"
+          title={isCollapsed ? "API keys" : undefined}
+        >
           <KeyRound />
-          API keys
+          <span className={cn(isCollapsed && "hidden")}>API keys</span>
         </SidebarMenuButton>
       </SidebarMenu>
     </SidebarGroup>
   );
 }
 
-function UserMenu({ user }: { user: AppSidebarUser }) {
+function UserMenu({ user, isCollapsed }: { user: AppSidebarUser; isCollapsed: boolean }) {
   const router = useRouter();
   const displayName = user.name?.trim() || user.email?.split("@")[0] || "User";
   const displayEmail = user.email || user.id;
@@ -157,14 +241,19 @@ function UserMenu({ user }: { user: AppSidebarUser }) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          className={cn(
+            "flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+            isCollapsed && "justify-center px-0",
+          )}
+          aria-label="User menu"
+          title={isCollapsed ? displayName : undefined}
         >
           <UserAvatar initials={initials} />
-          <span className="min-w-0 flex-1">
+          <span className={cn("min-w-0 flex-1", isCollapsed && "hidden")}>
             <span className="block truncate font-medium">{displayName}</span>
             <span className="block truncate text-xs text-muted-foreground">{displayEmail}</span>
           </span>
-          <ChevronUp className="text-muted-foreground" />
+          <ChevronUp className={cn("text-muted-foreground", isCollapsed && "hidden")} />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-64">
@@ -189,6 +278,10 @@ function UserMenu({ user }: { user: AppSidebarUser }) {
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function collapsedMenuButtonClass(isCollapsed: boolean) {
+  return cn(isCollapsed && "size-9 justify-center px-0 py-0");
 }
 
 function UserAvatar({ initials }: { initials: string }) {

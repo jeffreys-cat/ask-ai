@@ -1,4 +1,4 @@
-import type { AccessContext, DocumentChunk, MetadataFilters, RetrievedChunk } from "@selectdb/shared";
+import type { AccessContext, DocumentChunk, MetadataFilters, RetrievalTraceCandidate, RetrievalTraceEvent, RetrievedChunk } from "@selectdb/shared";
 import { createLogger, serializeError } from "@selectdb/logger";
 import type { DorisPool } from "./client";
 import { assertSqlIdentifier, vectorLiteral } from "./client";
@@ -16,6 +16,7 @@ export interface SearchChunksInput {
   documentIds?: string[];
   filters?: MetadataFilters;
   accessContext?: AccessContext;
+  onRetrievalTrace?: (event: RetrievalTraceEvent) => void;
 }
 
 type RetrievalBranch = "vector" | "keyword";
@@ -101,6 +102,7 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
       const resultK = hasExplicitCandidateK ? candidateK : topK;
       const predicate = buildSearchPredicate(input);
 
+      const vectorStartedAt = performance.now();
       const [vectorRows] = await withDorisRetry(
         () =>
           pool.execute(
@@ -131,10 +133,23 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
       );
 
       const vectorCandidates = mapSearchRows(vectorRows as Array<Record<string, unknown>>, "vectorScore");
+      emitRetrievalTrace(input.onRetrievalTrace, {
+        type: "vector_candidates",
+        topK,
+        candidateK,
+        returnedCount: vectorCandidates.length,
+        latencyMs: elapsed(vectorStartedAt),
+        candidates: summarizeBranchCandidates(vectorCandidates),
+      });
       const keywordQuery = input.query.trim();
-      if (!keywordQuery) return fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK: resultK });
+      if (!keywordQuery) {
+        const fused = fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK: resultK });
+        emitRrfTrace(input.onRetrievalTrace, { vectorCandidates, keywordCandidates: [], fused, topK: resultK });
+        return fused;
+      }
 
       try {
+        const keywordStartedAt = performance.now();
         const [keywordRows] = await withDorisRetry(
           () =>
             pool.execute(
@@ -165,7 +180,18 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
           },
         );
         const keywordCandidates = mapSearchRows(keywordRows as Array<Record<string, unknown>>, "keywordScore");
-        return fuseRetrievedChunks({ vector: vectorCandidates, keyword: keywordCandidates, topK: resultK });
+        emitRetrievalTrace(input.onRetrievalTrace, {
+          type: "keyword_candidates",
+          query: keywordQuery,
+          topK,
+          candidateK,
+          returnedCount: keywordCandidates.length,
+          latencyMs: elapsed(keywordStartedAt),
+          candidates: summarizeBranchCandidates(keywordCandidates),
+        });
+        const fused = fuseRetrievedChunks({ vector: vectorCandidates, keyword: keywordCandidates, topK: resultK });
+        emitRrfTrace(input.onRetrievalTrace, { vectorCandidates, keywordCandidates, fused, topK: resultK });
+        return fused;
       } catch (error) {
         log.warn("doris keyword search failed; falling back to vector results", {
           operation: "searchChunks.keyword",
@@ -176,7 +202,20 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
           hasFilters: hasMetadataFilters(input.filters),
           error: serializeError(error),
         });
-        return fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK: resultK });
+        emitRetrievalTrace(input.onRetrievalTrace, {
+          type: "keyword_candidates",
+          query: keywordQuery,
+          topK,
+          candidateK,
+          returnedCount: 0,
+          latencyMs: 0,
+          fallback: true,
+          error: error instanceof Error ? error.message : String(error),
+          candidates: [],
+        });
+        const fused = fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK: resultK });
+        emitRrfTrace(input.onRetrievalTrace, { vectorCandidates, keywordCandidates: [], fused, topK: resultK });
+        return fused;
       }
     },
   };
@@ -287,6 +326,66 @@ function parseMetadata(metadata: unknown) {
   return {};
 }
 
+function emitRrfTrace(
+  onRetrievalTrace: SearchChunksInput["onRetrievalTrace"],
+  input: { vectorCandidates: SearchCandidate[]; keywordCandidates: SearchCandidate[]; fused: RetrievedChunk[]; topK: number },
+) {
+  const vectorKeys = new Set(input.vectorCandidates.map(candidateKey));
+  const keywordKeys = new Set(input.keywordCandidates.map(candidateKey));
+  const overlapCount = [...vectorKeys].filter((key) => keywordKeys.has(key)).length;
+  emitRetrievalTrace(onRetrievalTrace, {
+    type: "rrf_fusion",
+    topK: input.topK,
+    rrfK: 60,
+    vectorCount: input.vectorCandidates.length,
+    keywordCount: input.keywordCandidates.length,
+    overlapCount,
+    returnedCount: input.fused.length,
+    candidates: summarizeFusedCandidates(input.fused),
+  });
+}
+
+function emitRetrievalTrace(onRetrievalTrace: SearchChunksInput["onRetrievalTrace"], event: RetrievalTraceEvent) {
+  try {
+    onRetrievalTrace?.(event);
+  } catch (error) {
+    createLogger({ component: "doris.chunk-store" }).warn("retrieval trace observer failed", { error: serializeError(error) });
+  }
+}
+
+function summarizeBranchCandidates(candidates: SearchCandidate[]): RetrievalTraceCandidate[] {
+  return candidates.map((chunk, index) => ({
+    documentId: chunk.documentId,
+    chunkId: chunk.chunkId,
+    rank: index + 1,
+    score: chunk.branchScore,
+    title: chunk.title,
+    sourceUri: chunk.sourceUri,
+  }));
+}
+
+function summarizeFusedCandidates(chunks: RetrievedChunk[]): RetrievalTraceCandidate[] {
+  return chunks.map((chunk, index) => ({
+    documentId: chunk.documentId,
+    chunkId: chunk.chunkId,
+    rank: index + 1,
+    score: chunk.score,
+    title: chunk.title,
+    sourceUri: chunk.sourceUri,
+    vectorScore: chunk.retrieval?.vectorScore,
+    keywordScore: chunk.retrieval?.keywordScore,
+    vectorRank: chunk.retrieval?.vectorRank,
+    keywordRank: chunk.retrieval?.keywordRank,
+    fusionScore: chunk.retrieval?.fusionScore,
+    fusionRank: chunk.retrieval?.fusionRank,
+    matchedBy: chunk.retrieval?.matchedBy,
+  }));
+}
+
+function candidateKey(candidate: Pick<RetrievedChunk, "documentId" | "chunkId">) {
+  return `${candidate.documentId}:${candidate.chunkId}`;
+}
+
 export function fuseRetrievedChunks(input: {
   vector: SearchCandidate[];
   keyword: SearchCandidate[];
@@ -375,6 +474,10 @@ function normalizeBatchSize(value: string | undefined, fallback: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(Math.max(Math.trunc(parsed), 1), 1000);
+}
+
+function elapsed(startedAt: number) {
+  return Math.round(performance.now() - startedAt);
 }
 
 async function withDorisRetry<T>(operation: () => Promise<T>, log: ReturnType<typeof createLogger>, meta: Record<string, unknown>) {

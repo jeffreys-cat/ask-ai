@@ -112,7 +112,6 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
   const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(false);
   const [isEvidenceOpen, setIsEvidenceOpen] = useState(false);
   const [filterForm, setFilterForm] = useState<AskFilterForm>(emptyFilterForm);
-  const [filterOptions, setFilterOptions] = useState<MetadataFilterOptions>({ versions: [], languages: [], productLines: [] });
 
   const { messages, sendMessage, stop, status, error, setMessages } = useChat<AskMessage>({
     transport,
@@ -148,7 +147,6 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
     .map((part) => part.text)
     .join("");
   const metadataFilters = useMemo(() => buildMetadataFilters(filterForm), [filterForm]);
-  const activeFilterCount = useMemo(() => countActiveFilters(filterForm), [filterForm]);
 
   useEffect(() => {
     void loadProjects();
@@ -157,7 +155,6 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
   useEffect(() => {
     if (!selectedProjectId) return;
     void loadSessions(selectedProjectId);
-    void loadMetadataFilterOptions(selectedProjectId);
   }, [selectedProjectId]);
 
   async function loadProjects() {
@@ -240,21 +237,6 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
       setSessions([]);
     } finally {
       setIsLoadingSessions(false);
-    }
-  }
-
-  async function loadMetadataFilterOptions(activeProjectId: string) {
-    try {
-      const response = await fetch(`/api/projects/${activeProjectId}/metadata-options`, { cache: "no-store" });
-      if (!response.ok) throw new Error(await response.text());
-      const payload = (await response.json()) as MetadataFilterOptions;
-      setFilterOptions({
-        versions: payload.versions ?? [],
-        languages: payload.languages ?? [],
-        productLines: payload.productLines ?? [],
-      });
-    } catch {
-      setFilterOptions({ versions: [], languages: [], productLines: [] });
     }
   }
 
@@ -405,6 +387,7 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
                   isLoading={isLoadingSessions}
                   onSelect={loadSession}
                   embedded={!isProjectScoped}
+                  showHeader={!isProjectScoped}
                 />
               </SidebarContent>
 
@@ -505,12 +488,7 @@ export function AskPanel({ projectId, className }: { projectId?: string; classNa
                 <AskPromptInput
                   canAsk={canAsk}
                   includeDebugChunks={showContext}
-                  filterForm={filterForm}
-                  filterOptions={filterOptions}
-                  activeFilterCount={activeFilterCount}
                   onIncludeDebugChunksChange={setShowContext}
-                  onFilterChange={(key, value) => setFilterForm((current) => ({ ...current, [key]: value }))}
-                  onClearFilters={() => setFilterForm(emptyFilterForm)}
                   onSubmit={submitQuestion}
                   onStop={stop}
                   status={status}
@@ -594,24 +572,28 @@ function SessionHistory({
   isLoading,
   onSelect,
   embedded = false,
+  showHeader = true,
 }: {
   sessions: AskSessionSummary[];
   selectedSessionId: string;
   isLoading: boolean;
   onSelect: (sessionId: string) => void;
   embedded?: boolean;
+  showHeader?: boolean;
 }) {
   return (
     <div className={embedded ? "grid gap-3 border-t pt-5" : "flex h-full min-h-0 flex-col"}>
-      <div className={embedded ? "flex items-center justify-between gap-3" : "shrink-0 border-b p-4"}>
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Clock3 className="size-4 text-primary" />
-          Sessions
+      {showHeader ? (
+        <div className={embedded ? "flex items-center justify-between gap-3" : "shrink-0 border-b p-4"}>
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Clock3 className="size-4 text-primary" />
+            Sessions
+          </div>
+          <Badge variant="outline" className="tabular-nums">{sessions.length}</Badge>
         </div>
-        <Badge variant="outline" className="tabular-nums">{sessions.length}</Badge>
-      </div>
+      ) : null}
 
-      <div className={embedded ? "grid gap-2" : "min-h-0 flex-1 overflow-y-auto p-3"}>
+      <div className={embedded ? "grid gap-2" : "min-h-0 flex-1 overflow-y-auto p-3 pt-4"}>
         {isLoading ? (
           <div className="grid gap-2">
             {Array.from({ length: 5 }).map((_, index) => (
@@ -688,24 +670,14 @@ function SuggestedQuestionGrid() {
 function AskPromptInput({
   canAsk,
   includeDebugChunks,
-  filterForm,
-  filterOptions,
-  activeFilterCount,
   onIncludeDebugChunksChange,
-  onFilterChange,
-  onClearFilters,
   onSubmit,
   onStop,
   status,
 }: {
   canAsk: boolean;
   includeDebugChunks: boolean;
-  filterForm: AskFilterForm;
-  filterOptions: MetadataFilterOptions;
-  activeFilterCount: number;
   onIncludeDebugChunksChange: (value: boolean) => void;
-  onFilterChange: (key: keyof AskFilterForm, value: string) => void;
-  onClearFilters: () => void;
   onSubmit: (text: string) => Promise<void>;
   onStop: () => Promise<void>;
   status: ReturnType<typeof useChat<AskMessage>>["status"];
@@ -716,14 +688,6 @@ function AskPromptInput({
 
   return (
     <div className="grid gap-3">
-      <AskFilterControls
-        filters={filterForm}
-        options={filterOptions}
-        activeFilterCount={activeFilterCount}
-        disabled={isBusy}
-        onChange={onFilterChange}
-        onClear={onClearFilters}
-      />
       <PromptInput
         onSubmit={({ text }) => {
           const submitted = onSubmit(text);
