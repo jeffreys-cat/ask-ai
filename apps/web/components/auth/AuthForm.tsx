@@ -86,10 +86,6 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
               {pendingAction === "github" ? <Loader2 className="animate-spin" /> : <Github />}
               Continue with GitHub
             </Button>
-            <Button type="button" variant="outline" className="w-full" onClick={() => signInWithProvider("google")} disabled={Boolean(pendingAction)}>
-              {pendingAction === "google" ? <Loader2 className="animate-spin" /> : <span className="text-sm font-semibold">G</span>}
-              Continue with Google
-            </Button>
           </div>
 
           <div className="flex items-center gap-3">

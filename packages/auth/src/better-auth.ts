@@ -1,7 +1,8 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { eq } from "drizzle-orm";
-import { account, createDb, member, organization, session, user, verification } from "@selectdb/db";
+import { account, createDb, session, user, verification } from "@selectdb/db";
+import { ensureDefaultOrganizationForUser, ensureDefaultOrganizationForUserId } from "./default-organization";
 import { loadEnv } from "./load-env";
 
 loadEnv();
@@ -37,6 +38,22 @@ function createAuth() {
       enabled: true,
     },
     socialProviders: getSocialProviders(),
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (createdUser) => {
+            await ensureDefaultOrganizationForUser(getAuthDb(), createdUser);
+          },
+        },
+      },
+      session: {
+        create: {
+          after: async (createdSession) => {
+            await ensureDefaultOrganizationForUserId(getAuthDb(), createdSession.userId);
+          },
+        },
+      },
+    },
   });
 }
 
@@ -101,44 +118,9 @@ async function createInitUser() {
     await initDb.update(user).set({ emailVerified: true, updatedAt: new Date() }).where(eq(user.id, userId));
   }
 
-  const organizationId = process.env.INIT_ORGANIZATION_ID?.trim() || process.env.DEV_ORGANIZATION_ID?.trim() || "dev-org";
-  const organizationName = process.env.INIT_ORGANIZATION_NAME?.trim() || titleFromId(organizationId);
-  const organizationSlug = process.env.INIT_ORGANIZATION_SLUG?.trim() || slugFromId(organizationId);
-
-  const [existingOrg] = await initDb.select().from(organization).where(eq(organization.id, organizationId)).limit(1);
-  if (!existingOrg) {
-    await initDb.insert(organization).values({
-      id: organizationId,
-      name: organizationName,
-      slug: organizationSlug,
-    });
-  }
-
-  const memberId = `${organizationId}:${userId}`;
-  const [existingMember] = await initDb.select().from(member).where(eq(member.id, memberId)).limit(1);
-  if (!existingMember) {
-    await initDb.insert(member).values({
-      id: memberId,
-      organizationId,
-      userId,
-      role: "owner",
-    });
-  }
-}
-
-function titleFromId(id: string) {
-  return id
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ") || "Default Organization";
-}
-
-function slugFromId(id: string) {
-  return (
-    id
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "default"
-  );
+  await ensureDefaultOrganizationForUser(initDb, {
+    id: userId,
+    name: process.env.INIT_USER_NAME?.trim() || email.split("@")[0] || email,
+    email,
+  });
 }
