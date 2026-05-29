@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FolderOpen, Loader2, Plus, RefreshCw } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock3, FolderOpen, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -68,11 +69,12 @@ export function ProjectList() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <header className="flex flex-col gap-5 rounded-lg border bg-background/80 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Projects</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Create documentation projects and manage Markdown ingestion.</p>
+          <p className="text-xs font-medium uppercase text-muted-foreground">Workspace</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight">Projects</h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create documentation projects, monitor indexing, and open the right project workspace.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={loadProjects} disabled={isLoading}>
@@ -120,6 +122,8 @@ export function ProjectList() {
         </div>
       </header>
 
+      <ProjectStats projects={projects} isLoading={isLoading} />
+
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>Project request failed</AlertTitle>
@@ -127,20 +131,20 @@ export function ProjectList() {
         </Alert>
       ) : null}
 
-      <Card>
-        <CardHeader>
+      <Card className="overflow-hidden bg-background/90">
+        <CardHeader className="border-b bg-muted/25">
           <CardTitle>Project list</CardTitle>
-          <CardDescription>Open a project to view details or ingest Markdown files.</CardDescription>
+          <CardDescription>Open a project to view details, ingest documents, or manage API keys.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {isLoading ? (
-            <div className="grid gap-3">
+            <div className="grid gap-3 p-6">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-2/3" />
             </div>
           ) : projects.length === 0 ? (
-            <div className="flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed text-center">
+            <div className="m-6 flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed bg-muted/20 text-center">
               <FolderOpen className="mb-3 h-9 w-9 text-muted-foreground" />
               <p className="font-medium">No projects yet</p>
               <p className="mt-1 text-sm text-muted-foreground">Create a project before ingesting Markdown files.</p>
@@ -149,25 +153,37 @@ export function ProjectList() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
+                  <TableHead className="pl-6">Name</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Updated</TableHead>
-                  <TableHead className="w-20 text-right">Open</TableHead>
+                  <TableHead className="w-24 pr-6 text-right">Open</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {projects.map((project) => (
-                  <TableRow key={project.id}>
-                    <TableCell className="font-medium">{project.name}</TableCell>
+                  <TableRow key={project.id} className="hover:bg-muted/30">
+                    <TableCell className="pl-6 font-medium">
+                      <div className="grid gap-1">
+                        <Link className="w-fit underline-offset-4 hover:underline" href={`/admin/projects/${project.id}`}>
+                          {project.name}
+                        </Link>
+                        <span className="max-w-72 truncate text-xs font-normal text-muted-foreground">{project.id}</span>
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <ProjectStatusBadge status={project.status} />
                     </TableCell>
-                    <TableCell className="max-w-md text-muted-foreground">{project.description || "No description"}</TableCell>
+                    <TableCell className="max-w-md text-muted-foreground">
+                      <span className="line-clamp-2">{project.description || "No description"}</span>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{formatDate(project.updatedAt)}</TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="pr-6 text-right">
                       <Button asChild variant="ghost" size="sm">
-                        <Link href={`/admin/projects/${project.id}`}>Open</Link>
+                        <Link href={`/admin/projects/${project.id}`}>
+                          Open
+                          <ArrowRight className="size-3.5" />
+                        </Link>
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -178,6 +194,35 @@ export function ProjectList() {
         </CardContent>
       </Card>
     </main>
+  );
+}
+
+function ProjectStats({ projects, isLoading }: { projects: ProjectSummary[]; isLoading: boolean }) {
+  const readyCount = projects.filter((project) => project.status === "ready").length;
+  const activeCount = projects.filter((project) => project.status === "ingesting" || project.status === "queued").length;
+  const failedCount = projects.filter((project) => project.status === "failed").length;
+
+  return (
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <StatCard icon={<FolderOpen className="size-4" />} label="Total projects" value={projects.length} isLoading={isLoading} />
+      <StatCard icon={<CheckCircle2 className="size-4" />} label="Ready" value={readyCount} isLoading={isLoading} />
+      <StatCard icon={<Clock3 className="size-4" />} label="Indexing" value={activeCount} isLoading={isLoading} />
+      <StatCard icon={<TriangleAlert className="size-4" />} label="Needs attention" value={failedCount} isLoading={isLoading} />
+    </section>
+  );
+}
+
+function StatCard({ icon, label, value, isLoading }: { icon: ReactNode; label: string; value: number; isLoading: boolean }) {
+  return (
+    <Card className="bg-background/85">
+      <CardContent className="flex items-center justify-between p-4">
+        <div>
+          <p className="text-sm text-muted-foreground">{label}</p>
+          {isLoading ? <Skeleton className="mt-2 h-7 w-12" /> : <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>}
+        </div>
+        <span className="flex size-9 items-center justify-center rounded-lg border bg-muted/40 text-muted-foreground">{icon}</span>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -7,6 +7,6 @@ interface SignUpPageProps {
 
 export default async function SignUpPage({ searchParams }: SignUpPageProps) {
   const params = await searchParams;
-  await redirectIfAuthenticated(params.callbackURL || "/ask");
+  await redirectIfAuthenticated(params.callbackURL || "/admin/projects");
   return <AuthForm mode="sign-up" />;
 }

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { IngestTask } from "./types";
@@ -77,26 +77,21 @@ export function ProjectIngest({ projectId, onIngested }: { projectId: string; on
         </Alert>
       ) : null}
 
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => loadTasks()} disabled={isRefreshing}>
+          {isRefreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          Refresh
+        </Button>
+        <Button asChild>
+          <Link href={`/admin/projects/${projectId}/ingest/new`}>
+            <Plus />
+            New
+          </Link>
+        </Button>
+      </div>
+
       <Card>
-        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle>Ingest tasks</CardTitle>
-            <CardDescription>Create Markdown ingest jobs and track background progress.</CardDescription>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => loadTasks()} disabled={isRefreshing}>
-              {isRefreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              Refresh
-            </Button>
-            <Button asChild>
-              <Link href={`/admin/projects/${projectId}/ingest/new`}>
-                <Plus />
-                New
-              </Link>
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="p-6">
           {tasks.length === 0 ? (
             <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No ingest tasks yet.</p>
           ) : (

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { Check, Copy, FileCode2, FileUp, KeyRound, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, CalendarClock, Check, Copy, FileCode2, FileUp, Fingerprint, KeyRound, MessageSquareText, Plus, Trash2 } from "lucide-react";
 import { AskPanel } from "@/components/ask/AskPanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ProjectIngest } from "./ProjectIngest";
 import { ProjectIngestNew } from "./ProjectIngestNew";
+import { ProjectStatusBadge } from "./status";
 import type { ProjectSummary } from "./types";
 
 export function ProjectDetail({ projectId, view }: { projectId: string; view: "overview" | "ingest" | "ingest-new" | "ask" | "api-keys" }) {
@@ -46,20 +48,11 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
     <div
       className={cn(
         "mx-auto flex w-full flex-col gap-6 px-6 py-8",
-        view === "ask" ? "h-screen min-h-0 max-w-none gap-4 overflow-hidden px-4 py-6 lg:px-6" : "max-w-5xl",
+        view === "ask" ? "h-screen min-h-0 max-w-none gap-4 overflow-hidden px-4 py-6 lg:px-6" : "max-w-6xl",
       )}
     >
       {view === "ask" ? null : (
-        <header className="shrink-0">
-          <div className="min-w-0">
-            {isLoading ? (
-              <Skeleton className="h-8 w-64" />
-            ) : (
-              <h1 className="truncate text-3xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
-            )}
-            <p className="mt-2 text-sm text-muted-foreground">{project?.description || "Manage project details and ingestion."}</p>
-          </div>
-        </header>
+        <ProjectPageHeader project={project} projectId={projectId} view={view} isLoading={isLoading} />
       )}
 
       <div className="flex gap-2 md:hidden">
@@ -101,33 +94,132 @@ export function ProjectDetail({ projectId, view }: { projectId: string; view: "o
   );
 }
 
+function ProjectPageHeader({
+  project,
+  projectId,
+  view,
+  isLoading,
+}: {
+  project: ProjectSummary | null;
+  projectId: string;
+  view: "overview" | "ingest" | "ingest-new" | "api-keys";
+  isLoading: boolean;
+}) {
+  const projectName = project?.name ?? "Project";
+  const header = getProjectPageHeader({ projectName, projectDescription: project?.description, view });
+
+  return (
+    <header className="shrink-0">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase text-muted-foreground">{header.eyebrow}</p>
+          {isLoading && view === "overview" ? <Skeleton className="mt-2 h-8 w-64" /> : <h1 className="mt-1 truncate text-3xl font-semibold tracking-tight">{header.title}</h1>}
+          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{header.description}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {view === "overview" && !isLoading && project?.status ? <ProjectStatusBadge status={project.status} /> : null}
+          {view === "ingest-new" ? (
+            <Button asChild variant="outline">
+              <Link href={`/admin/projects/${projectId}/ingest`}>
+                <ArrowLeft />
+                Back
+              </Link>
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function getProjectPageHeader({
+  projectName,
+  projectDescription,
+  view,
+}: {
+  projectName: string;
+  projectDescription?: string | null;
+  view: "overview" | "ingest" | "ingest-new" | "api-keys";
+}) {
+  if (view === "overview") {
+    return {
+      eyebrow: "Project workspace",
+      title: projectName,
+      description: projectDescription || "Manage project details, ingestion, chatbot testing, and API access.",
+    };
+  }
+
+  if (view === "ingest-new") {
+    return {
+      eyebrow: projectName,
+      title: "New ingest task",
+      description: "Create a background task from a project folder, selected Markdown files, or a sitemap URL.",
+    };
+  }
+
+  if (view === "api-keys") {
+    return {
+      eyebrow: projectName,
+      title: "API keys",
+      description: "Generate project-scoped keys for external search and answer requests.",
+    };
+  }
+
+  return {
+    eyebrow: projectName,
+    title: "Ingest tasks",
+    description: "Create Markdown ingest jobs and track background progress.",
+  };
+}
+
 function ProjectOverview({ project, projectId, isLoading }: { project: ProjectSummary | null; projectId: string; isLoading: boolean }) {
   return (
     <div className="grid gap-4">
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle>Overview</CardTitle>
-            <CardDescription>Project metadata and current ingestion state.</CardDescription>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <OverviewMetric icon={<ProjectStatusIcon />} label="Status" value={project?.status ?? "unknown"} isLoading={isLoading} />
+        <OverviewMetric icon={<CalendarClock className="size-4" />} label="Created" value={formatDate(project?.createdAt)} isLoading={isLoading} />
+        <OverviewMetric icon={<CalendarClock className="size-4" />} label="Updated" value={formatDate(project?.updatedAt)} isLoading={isLoading} />
+        <OverviewMetric icon={<Fingerprint className="size-4" />} label="Project ID" value={project?.id ?? projectId} isLoading={isLoading} mono />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <Card className="bg-background/90">
+          <CardHeader className="border-b bg-muted/25">
+            <CardTitle>Project setup</CardTitle>
+            <CardDescription>Use these actions to move from source content to a searchable chatbot.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 text-sm">
-            {isLoading ? (
-              <>
-                <Skeleton className="h-5 w-1/2" />
-                <Skeleton className="h-5 w-2/3" />
-              </>
-            ) : (
-              <>
-                <InfoRow label="Project ID" value={project?.id ?? projectId} />
-                <InfoRow label="Status" value={project?.status ?? "unknown"} />
-                <InfoRow label="Created" value={formatDate(project?.createdAt)} />
-                <InfoRow label="Updated" value={formatDate(project?.updatedAt)} />
-              </>
-            )}
+          <CardContent className="grid gap-3 pt-6 sm:grid-cols-3">
+            <Button asChild variant="outline" className="h-auto w-full justify-start gap-3 p-4">
+              <Link href={`/admin/projects/${projectId}/ingest`}>
+                <FileUp className="size-4" />
+                <span className="grid gap-1 text-left">
+                  <span>Ingest docs</span>
+                  <span className="text-xs font-normal text-muted-foreground">Queue Markdown or sitemap content</span>
+                </span>
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="h-auto w-full justify-start gap-3 p-4">
+              <Link href={`/admin/projects/${projectId}/ask`}>
+                <MessageSquareText className="size-4" />
+                <span className="grid gap-1 text-left">
+                  <span>Test answers</span>
+                  <span className="text-xs font-normal text-muted-foreground">Ask against indexed sources</span>
+                </span>
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="h-auto w-full justify-start gap-3 p-4">
+              <Link href={`/admin/projects/${projectId}/api-keys`}>
+                <KeyRound className="size-4" />
+                <span className="grid gap-1 text-left">
+                  <span>API access</span>
+                  <span className="text-xs font-normal text-muted-foreground">Create project-scoped keys</span>
+                </span>
+              </Link>
+            </Button>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-background/90">
           <CardHeader>
             <CardTitle>Next step</CardTitle>
             <CardDescription>Index Markdown files before using the chatbot.</CardDescription>
@@ -145,6 +237,24 @@ function ProjectOverview({ project, projectId, isLoading }: { project: ProjectSu
 
       <ProjectEmbedPrompt project={project} projectId={projectId} isLoading={isLoading} />
     </div>
+  );
+}
+
+function ProjectStatusIcon() {
+  return <span className="size-2 rounded-full bg-primary" />;
+}
+
+function OverviewMetric({ icon, label, value, isLoading, mono = false }: { icon: ReactNode; label: string; value: string; isLoading: boolean; mono?: boolean }) {
+  return (
+    <Card className="bg-background/85">
+      <CardContent className="flex items-start gap-3 p-4">
+        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 text-muted-foreground">{icon}</span>
+        <div className="min-w-0">
+          <p className="text-sm text-muted-foreground">{label}</p>
+          {isLoading ? <Skeleton className="mt-2 h-5 w-24" /> : <p className={cn("mt-1 truncate font-medium", mono && "font-mono text-xs")}>{value}</p>}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -366,15 +476,6 @@ function ProjectApiKeys({ projectId }: { projectId: string }) {
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 rounded-md border p-3 sm:grid-cols-[120px_1fr] sm:gap-4">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="break-all font-medium">{value}</span>
-    </div>
   );
 }
 

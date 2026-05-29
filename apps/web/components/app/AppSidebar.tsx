@@ -14,13 +14,11 @@ import {
   KeyRound,
   LogOut,
   MessageSquareText,
-  Settings,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -52,16 +50,16 @@ export function AppSidebar({ user }: { user: AppSidebarUser }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   return (
-    <Sidebar className={cn("transition-[width] duration-200", isCollapsed && "w-16")}>
+    <Sidebar className={cn("border-sidebar-border/80 bg-sidebar/95 shadow-sm transition-[width] duration-200", isCollapsed && "w-16")}>
       <SidebarHeader className={cn("p-4", isCollapsed && "p-3")}>
         <div className={cn("flex items-center gap-2", isCollapsed ? "justify-center" : "justify-between")}>
           <Link
             href="/admin/projects"
-            className={cn("flex min-w-0 items-center gap-3 rounded-md px-1 py-1.5", isCollapsed && "justify-center px-0")}
+            className={cn("flex min-w-0 items-center gap-3 rounded-lg px-1 py-1.5 transition-colors hover:bg-sidebar-accent/60", isCollapsed && "justify-center px-0")}
             aria-label="Projects"
             title={isCollapsed ? "Ask AI" : undefined}
           >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
               <Bot />
             </span>
             <span className={cn("min-w-0", isCollapsed && "hidden")}>
@@ -242,7 +240,7 @@ function UserMenu({ user, isCollapsed }: { user: AppSidebarUser; isCollapsed: bo
         <button
           type="button"
           className={cn(
-            "flex w-full min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+            "flex w-full min-w-0 items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
             isCollapsed && "justify-center px-0",
           )}
           aria-label="User menu"
@@ -265,16 +263,10 @@ function UserMenu({ user, isCollapsed }: { user: AppSidebarUser; isCollapsed: bo
           </span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuItem disabled>
-            <Settings />
-            Organization settings
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={signOut}>
-            <LogOut />
-            Log out
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
+        <DropdownMenuItem onSelect={signOut}>
+          <LogOut />
+          Log out
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

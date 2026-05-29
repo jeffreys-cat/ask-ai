@@ -1,4 +1,5 @@
 import * as React from "react";
+import Link, { type LinkProps } from "next/link";
 import { cn } from "@/lib/utils";
 
 export const SidebarProvider = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
@@ -38,9 +39,14 @@ export const SidebarMenu = ({ className, ...props }: React.HTMLAttributes<HTMLDi
   <nav className={cn("grid gap-1", className)} {...props} />
 );
 
-export const SidebarMenuButton = React.forwardRef<HTMLAnchorElement, React.AnchorHTMLAttributes<HTMLAnchorElement> & { isActive?: boolean }>(
+type SidebarMenuButtonProps = Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
+  href: LinkProps["href"];
+  isActive?: boolean;
+};
+
+export const SidebarMenuButton = React.forwardRef<HTMLAnchorElement, SidebarMenuButtonProps>(
   ({ className, isActive, ...props }, ref) => (
-    <a
+    <Link
       ref={ref}
       className={cn(
         "flex min-h-9 items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",

@@ -7,6 +7,6 @@ interface SignInPageProps {
 
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   const params = await searchParams;
-  await redirectIfAuthenticated(params.callbackURL || "/ask");
+  await redirectIfAuthenticated(params.callbackURL || "/admin/projects");
   return <AuthForm mode="sign-in" />;
 }

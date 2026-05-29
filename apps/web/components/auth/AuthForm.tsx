@@ -17,7 +17,7 @@ type AuthMode = "sign-in" | "sign-up";
 export function AuthForm({ mode }: { mode: AuthMode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackURL = searchParams.get("callbackURL") || "/ask";
+  const callbackURL = searchParams.get("callbackURL") || "/admin/projects";
   const isSignUp = mode === "sign-up";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -62,8 +62,13 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-10">
-      <Card className="w-full max-w-md">
+    <main className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-[linear-gradient(135deg,#fffaf0_0%,#f8fafc_42%,#eff6ff_100%)] px-4 py-10">
+      <div className="absolute inset-0 -z-20 bg-[linear-gradient(120deg,rgba(234,88,12,0.14)_0%,transparent_34%),linear-gradient(240deg,rgba(14,165,233,0.14)_0%,transparent_36%),linear-gradient(160deg,rgba(15,23,42,0.06),transparent_44%)]" />
+      <div className="absolute inset-0 -z-10 bg-[linear-gradient(rgba(15,23,42,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(15,23,42,0.045)_1px,transparent_1px)] [background-size:48px_48px] [mask-image:linear-gradient(to_bottom,rgba(0,0,0,0.7),transparent_82%)]" />
+      <div className="absolute -left-40 bottom-16 -z-10 h-52 w-[42rem] -rotate-12 border-y border-primary/10 bg-primary/5" />
+      <div className="absolute -right-36 top-20 -z-10 h-48 w-[40rem] rotate-12 border-y border-sky-200/70 bg-sky-100/30" />
+
+      <Card className="w-full max-w-md border-white/65 bg-background/90 shadow-2xl shadow-slate-900/10 backdrop-blur-xl">
         <CardHeader>
           <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <LockKeyhole className="size-5" />

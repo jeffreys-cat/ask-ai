@@ -1,12 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, FileUp, Globe2, Loader2 } from "lucide-react";
+import { FileUp, Globe2, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -73,19 +72,7 @@ export function ProjectIngestNew({ projectId, onCreated }: { projectId: string; 
       ) : null}
 
       <Card>
-        <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle>New ingest task</CardTitle>
-            <CardDescription>Create a background task from a project folder, selected Markdown files, or a sitemap URL.</CardDescription>
-          </div>
-          <Button asChild variant="outline">
-            <Link href={`/admin/projects/${projectId}/ingest`}>
-              <ArrowLeft />
-              Back
-            </Link>
-          </Button>
-        </CardHeader>
-        <CardContent className="grid gap-6">
+        <CardContent className="grid gap-6 p-6">
           <fieldset className="grid gap-3">
             <legend className="text-sm font-medium">Source</legend>
             <div className="grid gap-3 lg:grid-cols-3">
