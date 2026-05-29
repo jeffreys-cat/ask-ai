@@ -155,6 +155,117 @@ describe("runAskDocsWorkflow", () => {
       ],
     });
   });
+
+  it("uses a rewritten request for retrieval while answering the original question", async () => {
+    vi.stubEnv("LITEFUSE_PUBLIC_KEY", "");
+    vi.stubEnv("LITEFUSE_SECRET_KEY", "");
+    vi.stubEnv("LANGFUSE_PUBLIC_KEY", "");
+    vi.stubEnv("LANGFUSE_SECRET_KEY", "");
+    const fetchMock = vi.fn<typeof fetch>(async () => streamResponse("Use QUERY_REWRITE_ENABLED [1]."));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { runAskDocsWorkflow } = await import("./ask-docs.workflow");
+    const chunks: RetrievedChunk[] = [
+      {
+        organizationId: "org-1",
+        documentId: "doc-rewrite",
+        chunkId: "rewrite:0",
+        content: "QUERY_REWRITE_ENABLED controls query rewrite.",
+        metadata: {},
+        score: 0.9,
+      },
+    ];
+    const search = vi.fn(async () => chunks);
+    const embed = vi.fn(async () => [[2, 0]]);
+    const events = [];
+
+    for await (const event of runAskDocsWorkflow({
+      organizationId: "org-1",
+      question: "How do I turn it on?",
+      retriever: { search },
+      embeddings: { embed },
+      includeDebugChunks: true,
+      requestRewriter: {
+        provider: "test",
+        model: "test-rewriter",
+        rewrite: async () => "How to enable QUERY_REWRITE_ENABLED for request rewrite?",
+      },
+      chat: { baseUrl: "https://chat.test/v1", apiKey: "test-key", model: "test-model" },
+    })) {
+      events.push(event);
+    }
+
+    expect(embed).toHaveBeenCalledWith(["How to enable QUERY_REWRITE_ENABLED for request rewrite?"]);
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "How to enable QUERY_REWRITE_ENABLED for request rewrite?",
+        queryEmbedding: [2, 0],
+      }),
+    );
+    expect(events.find((event) => event.type === "request_rewrite")).toMatchObject({
+      originalQuestion: "How do I turn it on?",
+      query: "How to enable QUERY_REWRITE_ENABLED for request rewrite?",
+      changed: true,
+    });
+
+    const answerCall = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(answerCall?.[1]?.body)) as { messages: Array<{ content: string }> };
+    expect(body.messages.map((message) => message.content).join("\n")).toContain("How do I turn it on?");
+    expect(events.find((event) => event.type === "done")).toMatchObject({
+      answer: "Use QUERY_REWRITE_ENABLED [1].",
+    });
+  });
+
+  it("falls back to the original question when request rewrite fails open", async () => {
+    vi.stubEnv("LITEFUSE_PUBLIC_KEY", "");
+    vi.stubEnv("LITEFUSE_SECRET_KEY", "");
+    vi.stubEnv("LANGFUSE_PUBLIC_KEY", "");
+    vi.stubEnv("LANGFUSE_SECRET_KEY", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => streamResponse("Use the original question [1].")),
+    );
+
+    const { runAskDocsWorkflow } = await import("./ask-docs.workflow");
+    const search = vi.fn(async () => [
+      {
+        organizationId: "org-1",
+        documentId: "doc-original",
+        chunkId: "original:0",
+        content: "Original question fallback context.",
+        metadata: {},
+        score: 0.9,
+      },
+    ]);
+    const events = [];
+
+    for await (const event of runAskDocsWorkflow({
+      organizationId: "org-1",
+      question: "Original fallback?",
+      retriever: { search },
+      embeddings: { embed: async () => [[1, 0]] },
+      requestRewriter: {
+        provider: "test",
+        model: "test-rewriter",
+        rewrite: async () => {
+          throw new Error("rewrite unavailable");
+        },
+      },
+      chat: { baseUrl: "https://chat.test/v1", apiKey: "test-key", model: "test-model" },
+    })) {
+      events.push(event);
+    }
+
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: "Original fallback?" }));
+    expect(events.find((event) => event.type === "request_rewrite")).toMatchObject({
+      query: "Original fallback?",
+      fallback: true,
+      error: "rewrite unavailable",
+    });
+    expect(events.find((event) => event.type === "done")).toMatchObject({
+      answer: "Use the original question [1].",
+    });
+  });
 });
 
 function streamResponse(content: string) {

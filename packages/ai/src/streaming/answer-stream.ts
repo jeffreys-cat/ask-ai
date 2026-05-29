@@ -66,3 +66,25 @@ export async function* streamOpenAICompatibleChat(config: ChatStreamConfig, mess
     }
   }
 }
+
+export async function completeOpenAICompatibleChat(config: ChatStreamConfig, messages: ChatMessage[]): Promise<string> {
+  const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      stream: false,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Chat request failed: ${response.status} ${await response.text()}`);
+  }
+
+  const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  return payload.choices?.[0]?.message?.content?.trim() ?? "";
+}

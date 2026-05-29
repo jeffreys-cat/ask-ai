@@ -1,6 +1,6 @@
 # Ask AI 混合检索基线版本
 
-当前 Ask AI 默认使用混合检索：向量检索 + Doris 全文关键词检索。外部 API 请求体保持不变，检索层同时使用用户原始问题和 query embedding 召回候选 chunk，并在配置 reranker 后执行二阶段重排。
+当前 Ask AI 默认使用混合检索：向量检索 + Doris 全文关键词检索。外部 API 请求体保持不变。开启 query rewrite 后，系统会先把用户问题改写成更适合文档检索的 standalone query，再用于 embedding、关键词召回和 rerank；最终回答仍使用用户原始问题，避免回答偏离用户表达。
 
 ## 核心行为
 
@@ -14,6 +14,7 @@
 - debug chunks 会带上可选 `retrieval` 字段，显示向量/BM25 原始分数、RRF fusion 分数、rerank 分数、rank 和命中路径。
 - 检索支持可选元数据过滤：`version`、`language`、`productLine`、`publishedAt.from/to`。
 - 文档可见性由服务端身份控制：缺失或 `public` 可见，`restricted` 必须匹配 chunk metadata 中的 `allowedUserIds` 或 `allowedApiKeyIds`。
+- 可选 query rewrite：`QUERY_REWRITE_ENABLED=true` 时，检索前调用 chat model 改写请求；改写失败默认 fail-open 回退原问题。
 
 外部 `/api/askai/search` 可传入过滤条件：
 
@@ -71,10 +72,24 @@ RERANK_PROVIDER=cohere
 
 通用配置保持一致：`RERANK_API_KEY`、`RERANK_MODEL`、`RERANK_BASE_URL`、`RERANK_CANDIDATE_K`、`RERANK_TIMEOUT_MS`、`RERANK_MAX_DOC_CHARS`。`RERANK_PROVIDER=none` 可显式关闭 rerank。`RERANK_FAIL_OPEN=true` 时，rerank 请求失败、超时或未返回结果会回退到 RRF 顺序，不中断问答。
 
+## Query Rewrite 配置
+
+请求改写默认关闭。开启后复用 OpenAI-compatible chat endpoint，也可以单独指定改写模型：
+
+```bash
+QUERY_REWRITE_ENABLED=true
+QUERY_REWRITE_MODEL=gpt-4.1-mini
+QUERY_REWRITE_FAIL_OPEN=true
+```
+
+`QUERY_REWRITE_MODEL` 未配置时使用 `CHAT_MODEL`。`QUERY_REWRITE_FAIL_OPEN=true` 是默认行为，改写请求失败时继续使用原始问题完成检索和回答。
+
 ## 关键代码路径
 
 - `packages/rag/src/retrieval/retrieve.ts`
 - `packages/rag/src/retrieval/rerank.ts`
 - `packages/doris/src/chunk-store.ts`
+- `packages/ai/src/rewrite/request-rewriter.ts`
+- `packages/ai/src/mastra/workflows/ask-docs.workflow.ts`
 - `scripts/doris-init.ts`
 - `packages/shared/src/types.ts`

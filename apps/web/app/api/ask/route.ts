@@ -1,7 +1,7 @@
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
 import { createAskRepo, createDocumentsRepo, createProjectsRepo } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
-import { mastra, runAskDocsWorkflow } from "@selectdb/ai";
+import { mastra, requestRewriterFromEnv, runAskDocsWorkflow } from "@selectdb/ai";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
 import { BadRequestError, type AskStreamEvent } from "@selectdb/shared";
 import { getPublicRequestContext } from "../../../lib/auth";
@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     const filters = parseMetadataFilters(body.filters);
 
     if (!question) throw new BadRequestError("question is required");
+    const requestRewriter = requestRewriterFromEnv();
 
     const db = getDb();
     const documentIds = await resolveDocumentIds({
@@ -60,7 +61,7 @@ export async function POST(request: Request) {
         const textId = crypto.randomUUID();
 
         writer.write({ type: "data-session", data: { id: sessionId }, transient: true });
-        writer.write({ type: "data-status", data: { label: "Retrieving context" }, transient: true });
+        writer.write({ type: "data-status", data: { label: requestRewriter ? "Rewriting request" : "Retrieving context" }, transient: true });
         writer.write({ type: "text-start", id: textId });
 
         for await (const event of runAskDocsWorkflow({
@@ -76,7 +77,11 @@ export async function POST(request: Request) {
           topK: body.topK,
           includeDebugChunks: body.includeDebugChunks,
           agent,
+          requestRewriter,
         })) {
+          if (event.type === "request_rewrite") {
+            writer.write({ type: "data-status", data: { label: "Retrieving context" }, transient: true });
+          }
           if (event.type === "answer_delta") {
             writer.write({ type: "data-status", data: { label: "Answering" }, transient: true });
             writer.write({ type: "text-delta", id: textId, delta: event.delta });

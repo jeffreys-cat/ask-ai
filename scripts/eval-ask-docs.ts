@@ -9,6 +9,7 @@ import {
   getLitefuseClient,
   mastra,
   normalizeAskDocsEvalItem,
+  requestRewriterFromEnv,
   runAskDocsWorkflow,
   type AskDocsEvalInput,
   type AskDocsEvalOutput,
@@ -159,6 +160,7 @@ function createAskDocsTask(input: {
       topK: item.input.topK ?? input.defaultTopK,
       includeDebugChunks: true,
       agent: mastra.agents.docAnswerAgent,
+      requestRewriter: requestRewriterFromEnv(),
     })) {
       if (event.type === "answer_delta") answer += event.delta;
       if (event.type === "retrieved_chunks") retrievedChunks = event.chunks;

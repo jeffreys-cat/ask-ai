@@ -130,6 +130,7 @@ export const ASK_DOC_ANSWER_AGENT = {
 } satisfies AskAgentInput;
 
 export type AskStreamEvent =
+  | { type: "request_rewrite"; originalQuestion: string; query: string; changed: boolean; fallback?: boolean; error?: string }
   | { type: "answer_delta"; delta: string }
   | { type: "retrieved_chunks"; chunks: RetrievedChunk[] }
   | { type: "citations"; citations: Citation[] }

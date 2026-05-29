@@ -6,3 +6,4 @@ export * from "./prompts/litefuse";
 export * from "./prompts/no-context";
 export * from "./evaluation";
 export * from "./streaming/answer-stream";
+export * from "./rewrite/request-rewriter";

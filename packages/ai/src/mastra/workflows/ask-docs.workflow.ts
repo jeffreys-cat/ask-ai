@@ -15,6 +15,9 @@ import {
 import { mastra } from "../index";
 import { buildDocAnswerMessages } from "../agents/doc-answer.agent";
 import { chatConfigFromEnv, streamOpenAICompatibleChat, type ChatStreamConfig } from "../../streaming/answer-stream";
+import { queryRewriteFailOpenFromEnv, requestRewriterFromEnv, type RequestRewriter } from "../../rewrite/request-rewriter";
+
+type ObservabilitySpan = NonNullable<ReturnType<NonNullable<ReturnType<typeof mastra.observability.getDefaultInstance>>["startSpan"]>>;
 
 export interface AskDocsWorkflowInput {
   organizationId: string;
@@ -28,6 +31,8 @@ export interface AskDocsWorkflowInput {
   includeDebugChunks?: boolean;
   agent?: AskAgentInput;
   chat?: ChatStreamConfig;
+  requestRewriter?: RequestRewriter | null;
+  queryRewriteFailOpen?: boolean;
   reranker?: Reranker | null;
   rerankCandidateK?: number;
   rerankFailOpen?: boolean;
@@ -35,6 +40,8 @@ export interface AskDocsWorkflowInput {
 
 export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGenerator<AskStreamEvent> {
   const observability = mastra.observability.getDefaultInstance();
+  const queryRewriteRequested =
+    input.requestRewriter !== null && (input.requestRewriter !== undefined || process.env.QUERY_REWRITE_ENABLED?.toLowerCase() === "true");
   const rootSpan = observability?.startSpan({
     name: "ASK AI document answer",
     type: SpanType.AGENT_RUN,
@@ -47,6 +54,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       filters: input.filters,
       topK: input.topK,
       retrievalMode: "hybrid+rrf+rerank",
+      queryRewriteEnabled: queryRewriteRequested,
     },
     tags: ["ask-ai", "litefuse"],
     attributes: {
@@ -61,6 +69,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       topK: input.topK,
       includeDebugChunks: input.includeDebugChunks,
       retrievalMode: "hybrid+rrf+rerank",
+      queryRewriteEnabled: queryRewriteRequested,
     },
   });
   let chunks: RetrievedChunk[] = [];
@@ -70,6 +79,24 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
 
   try {
     const topK = normalizeWorkflowTopK(input.topK);
+    const requestRewriter = input.requestRewriter === null ? undefined : (input.requestRewriter ?? requestRewriterFromEnv());
+    const queryRewriteFailOpen = input.queryRewriteFailOpen ?? queryRewriteFailOpenFromEnv();
+    const retrievalQuery = await resolveRetrievalQuery({
+      question: input.question,
+      requestRewriter,
+      failOpen: queryRewriteFailOpen,
+      rootSpan,
+    });
+    if (requestRewriter) {
+      yield {
+        type: "request_rewrite",
+        originalQuestion: input.question,
+        query: retrievalQuery.query,
+        changed: retrievalQuery.query !== input.question,
+        fallback: retrievalQuery.fallback,
+        error: retrievalQuery.error,
+      };
+    }
     const reranker = input.reranker === null ? undefined : (input.reranker ?? rerankerFromEnv());
     const rerankCandidateK = reranker ? (input.rerankCandidateK ?? rerankCandidateKFromEnv(topK)) : undefined;
     const rerankFailOpen = input.rerankFailOpen ?? rerankFailOpenFromEnv();
@@ -79,7 +106,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       entityId: "retrieve-docs",
       entityName: "Retrieve document chunk candidates",
       input: {
-        question: input.question,
+        question: retrievalQuery.query,
+        originalQuestion: input.question,
         organizationId: input.organizationId,
         documentIds: input.documentIds,
         filters: input.filters,
@@ -99,6 +127,15 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         topK,
         candidateK: rerankCandidateK,
         retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
+        queryRewrite: requestRewriter
+          ? {
+              provider: requestRewriter.provider,
+              model: requestRewriter.model,
+              changed: retrievalQuery.query !== input.question,
+              fallback: retrievalQuery.fallback,
+              error: retrievalQuery.error,
+            }
+          : undefined,
       },
     });
     const retrievalTraceParent = retrievalSpan ?? rootSpan;
@@ -204,7 +241,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         retriever: input.retriever,
         embeddings: input.embeddings,
         organizationId: input.organizationId,
-        question: input.question,
+        question: retrievalQuery.query,
         topK,
         candidateK: rerankCandidateK,
         documentIds: input.documentIds,
@@ -229,7 +266,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       entityId: "rerank-docs",
       entityName: "Rerank document chunk candidates",
       input: {
-        question: input.question,
+        question: retrievalQuery.query,
+        originalQuestion: input.question,
         candidateCount: chunks.length,
         candidateDocumentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
         topK,
@@ -261,7 +299,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     try {
       const startedAt = performance.now();
       const result = await rerankChunks({
-        query: input.question,
+        query: retrievalQuery.query,
         chunks,
         topK,
         reranker,
@@ -380,5 +418,47 @@ function providerFromBaseUrl(baseUrl: string) {
     return host;
   } catch {
     return "openai-compatible";
+  }
+}
+
+async function resolveRetrievalQuery(input: {
+  question: string;
+  requestRewriter?: RequestRewriter;
+  failOpen: boolean;
+  rootSpan?: ObservabilitySpan;
+}) {
+  if (!input.requestRewriter) return { query: input.question };
+
+  const span = input.rootSpan?.createChildSpan({
+    name: "Rewrite request for retrieval",
+    type: SpanType.MODEL_GENERATION,
+    entityId: "query-rewrite",
+    entityName: "Query rewrite",
+    input: { question: input.question },
+    attributes: {
+      model: input.requestRewriter.model,
+      provider: input.requestRewriter.provider,
+      resultType: "planning",
+      streaming: false,
+    },
+    metadata: {
+      failOpen: input.failOpen,
+    },
+  });
+
+  try {
+    const query = await input.requestRewriter.rewrite({ question: input.question });
+    span?.end({
+      output: { query, changed: query !== input.question },
+    });
+    return { query };
+  } catch (error) {
+    span?.error({ error: asError(error) });
+    if (!input.failOpen) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    span?.end({
+      output: { query: input.question, fallback: true, error: message },
+    });
+    return { query: input.question, fallback: true, error: message };
   }
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runAskDocsWorkflow, mastra } from "@selectdb/ai";
+import { runAskDocsWorkflow, mastra, requestRewriterFromEnv } from "@selectdb/ai";
 import { createAskRepo, createDocumentsRepo, createProjectApiKeysRepo, createProjectsRepo, hashProjectApiKey, isProjectApiKey } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
@@ -97,6 +97,7 @@ async function runProjectSearch(input: {
     topK: input.topK,
     includeDebugChunks: false,
     agent: mastra.agents.docAnswerAgent,
+    requestRewriter: requestRewriterFromEnv(),
   })) {
     if (event.type === "answer_delta") answer += event.delta;
     if (event.type === "citations") citations = event.citations;
