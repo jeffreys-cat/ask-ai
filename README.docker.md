@@ -99,6 +99,22 @@ docker compose logs -f web
 docker compose logs -f worker
 ```
 
+调整 ingest 并发：
+
+```env
+INGEST_WORKER_CONCURRENCY=4
+```
+
+`INGEST_WORKER_CONCURRENCY` 控制单个 worker 容器内同时处理的 ingest job 数量，默认是 `1`。
+
+也可以横向扩展 worker 容器：
+
+```bash
+docker compose up -d --scale worker=3
+```
+
+总 ingest 并发约等于 `worker 容器数 * INGEST_WORKER_CONCURRENCY`。worker 会通过 Postgres 行锁领取任务，多个容器或同一容器内多个并发 slot 不会领取同一条未过期任务。
+
 停止服务：
 
 ```bash

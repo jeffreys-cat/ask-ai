@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createDb, createIngestionRepo, createProjectsRepo } from "@selectdb/db";
 import { createDorisPool } from "@selectdb/doris";
@@ -9,12 +11,14 @@ import { createIngestSourceStorage } from "./source-storage";
 
 loadRootEnv();
 
-const workerId = process.env.INGEST_WORKER_ID ?? `ingest-worker-${process.pid}`;
+const workerIdPrefix = process.env.INGEST_WORKER_ID ?? "ingest-worker";
+const workerInstanceId = `${workerIdPrefix}-${hostname()}-${process.pid}-${randomUUID()}`;
+const concurrency = parseInteger(process.env.INGEST_WORKER_CONCURRENCY, 1);
 const pollIntervalMs = parseInteger(process.env.INGEST_WORKER_POLL_INTERVAL_MS, 2_000);
 const leaseTimeoutMs = parseInteger(process.env.INGEST_WORKER_LEASE_TIMEOUT_MS, 5 * 60_000);
 const heartbeatIntervalMs = parseInteger(process.env.INGEST_WORKER_HEARTBEAT_INTERVAL_MS, 15_000);
 const maxAttempts = parseInteger(process.env.INGEST_WORKER_MAX_ATTEMPTS, 3);
-const log = createLogger({ component: "jobs.ingest-worker", workerId });
+const log = createLogger({ component: "jobs.ingest-worker", workerId: workerInstanceId });
 
 let shuttingDown = false;
 
@@ -32,40 +36,71 @@ async function main() {
   const projectsRepo = createProjectsRepo(db);
   const sourceStorage = createIngestSourceStorage();
 
-  log.info("ingest worker started", { pollIntervalMs, leaseTimeoutMs, heartbeatIntervalMs, maxAttempts });
+  log.info("ingest worker started", { concurrency, pollIntervalMs, leaseTimeoutMs, heartbeatIntervalMs, maxAttempts });
 
   try {
-    while (!shuttingDown) {
-      const job = await ingestionRepo.claimNext({
-        workerId,
-        staleBefore: new Date(Date.now() - leaseTimeoutMs),
-        maxAttempts,
-      });
-
-      if (!job) {
-        await sleep(pollIntervalMs);
-        continue;
-      }
-
-      await processJob({
-        job,
-        workerId,
-        db,
-        doris,
-        ingestionRepo,
-        projectsRepo,
-        sourceStorage,
-      });
-    }
+    await Promise.all(
+      Array.from({ length: concurrency }, (_, index) =>
+        runWorkerSlot({
+          slotId: index + 1,
+          workerId: concurrency === 1 ? workerInstanceId : `${workerInstanceId}-${index + 1}`,
+          db,
+          doris,
+          ingestionRepo,
+          projectsRepo,
+          sourceStorage,
+        }),
+      ),
+    );
   } finally {
     await Promise.allSettled([db.end({ timeout: 5 }), doris.end()]);
     log.info("ingest worker stopped");
   }
 }
 
+async function runWorkerSlot(input: {
+  slotId: number;
+  workerId: string;
+  db: ReturnType<typeof createDb>;
+  doris: ReturnType<typeof createDorisPool>;
+  ingestionRepo: ReturnType<typeof createIngestionRepo>;
+  projectsRepo: ReturnType<typeof createProjectsRepo>;
+  sourceStorage: ReturnType<typeof createIngestSourceStorage>;
+}) {
+  const slotLog = log.child({ slotId: input.slotId, slotWorkerId: input.workerId });
+  slotLog.info("ingest worker slot started");
+
+  while (!shuttingDown) {
+    const job = await input.ingestionRepo.claimNext({
+      workerId: input.workerId,
+      staleBefore: new Date(Date.now() - leaseTimeoutMs),
+      maxAttempts,
+    });
+
+    if (!job) {
+      await sleep(pollIntervalMs);
+      continue;
+    }
+
+    await processJob({
+      job,
+      workerId: input.workerId,
+      slotId: input.slotId,
+      db: input.db,
+      doris: input.doris,
+      ingestionRepo: input.ingestionRepo,
+      projectsRepo: input.projectsRepo,
+      sourceStorage: input.sourceStorage,
+    });
+  }
+
+  slotLog.info("ingest worker slot stopped");
+}
+
 async function processJob(input: {
   job: Awaited<ReturnType<ReturnType<typeof createIngestionRepo>["claimNext"]>>;
   workerId: string;
+  slotId: number;
   db: ReturnType<typeof createDb>;
   doris: ReturnType<typeof createDorisPool>;
   ingestionRepo: ReturnType<typeof createIngestionRepo>;
@@ -90,6 +125,8 @@ async function processJob(input: {
     taskId,
     sourcePath,
     attempt: job.attempts,
+    slotId: input.slotId,
+    slotWorkerId: input.workerId,
   });
 
   const heartbeat = setInterval(() => {
@@ -123,9 +160,14 @@ async function processJob(input: {
       metadata: { ...metadata, projectId, sourcePath, sourceKind: sourceKind === "web_url" ? "web_url" : "project_file" },
       db: input.db,
       doris: input.doris,
+      manageIngestionStatus: false,
     });
 
-    await input.ingestionRepo.complete({ ingestionId: job.id, workerId: input.workerId, chunkCount: result.chunkCount });
+    const completedJob = await input.ingestionRepo.complete({ ingestionId: job.id, workerId: input.workerId, chunkCount: result.chunkCount });
+    if (!completedJob) {
+      jobLog.warn("ingest job completion skipped because lock was lost");
+      return;
+    }
     if (sourceKind !== "web_url") await deleteSource(input.sourceStorage, sourceUri, jobLog);
     await refreshProjectStatus(input.ingestionRepo, input.projectsRepo, job.organizationId, projectId, taskId);
     jobLog.info("ingest job completed", { chunkCount: result.chunkCount });
@@ -135,9 +177,14 @@ async function processJob(input: {
     jobLog.error("ingest job failed", { shouldRetry, error: serializeError(error) });
 
     if (shouldRetry) {
-      await input.ingestionRepo.releaseForRetry({ ingestionId: job.id, workerId: input.workerId, error: message });
+      const releasedJob = await input.ingestionRepo.releaseForRetry({ ingestionId: job.id, workerId: input.workerId, error: message });
+      if (!releasedJob) jobLog.warn("ingest job retry release skipped because lock was lost");
     } else {
-      await input.ingestionRepo.fail({ ingestionId: job.id, workerId: input.workerId, error: message });
+      const failedJob = await input.ingestionRepo.fail({ ingestionId: job.id, workerId: input.workerId, error: message });
+      if (!failedJob) {
+        jobLog.warn("ingest job failure update skipped because lock was lost");
+        return;
+      }
       if (projectId) await refreshProjectStatus(input.ingestionRepo, input.projectsRepo, job.organizationId, projectId, taskId);
     }
   } finally {

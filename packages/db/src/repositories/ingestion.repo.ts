@@ -39,39 +39,39 @@ export function createIngestionRepo(db: DbClient) {
     },
 
     async claimNext(input: { workerId: string; staleBefore: Date; maxAttempts: number }) {
-      const [job] = await db
-        .update(ingestionJobs)
-        .set({
-          status: "running",
-          lockedBy: input.workerId,
-          lockedAt: new Date(),
-          startedAt: sql`coalesce(${ingestionJobs.startedAt}, now())`,
-          lastHeartbeatAt: new Date(),
-          attempts: sql`${ingestionJobs.attempts} + 1`,
-          error: null,
-          updatedAt: new Date(),
-        })
-        .where(
-          eq(
-            ingestionJobs.id,
-            db
-              .select({ id: ingestionJobs.id })
-              .from(ingestionJobs)
-              .where(
-                or(
-                  and(eq(ingestionJobs.status, "queued"), lt(ingestionJobs.attempts, input.maxAttempts)),
-                  and(
-                    eq(ingestionJobs.status, "running"),
-                    or(isNull(ingestionJobs.lastHeartbeatAt), lt(ingestionJobs.lastHeartbeatAt, input.staleBefore)),
-                  ),
-                ),
-              )
-              .orderBy(asc(ingestionJobs.createdAt))
-              .limit(1),
-          ),
-        )
-        .returning();
-      return job ?? null;
+      return db.transaction(async (tx) => {
+        const [nextJob] = await tx
+          .select({ id: ingestionJobs.id })
+          .from(ingestionJobs)
+          .where(
+            or(
+              and(eq(ingestionJobs.status, "queued"), lt(ingestionJobs.attempts, input.maxAttempts)),
+              and(eq(ingestionJobs.status, "running"), or(isNull(ingestionJobs.lastHeartbeatAt), lt(ingestionJobs.lastHeartbeatAt, input.staleBefore))),
+            ),
+          )
+          .orderBy(asc(ingestionJobs.createdAt))
+          .limit(1)
+          .for("update", { skipLocked: true });
+
+        if (!nextJob) return null;
+
+        const [job] = await tx
+          .update(ingestionJobs)
+          .set({
+            status: "running",
+            lockedBy: input.workerId,
+            lockedAt: new Date(),
+            startedAt: sql`coalesce(${ingestionJobs.startedAt}, now())`,
+            lastHeartbeatAt: new Date(),
+            attempts: sql`${ingestionJobs.attempts} + 1`,
+            error: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(ingestionJobs.id, nextJob.id))
+          .returning();
+
+        return job ?? null;
+      });
     },
 
     async heartbeat(input: { ingestionId: string; workerId: string }) {

@@ -19,6 +19,7 @@ export interface IngestDocumentInput {
   db: DbClient;
   doris: DorisPool;
   embeddings?: EmbeddingProvider;
+  manageIngestionStatus?: boolean;
 }
 
 export async function ingestDocument(input: IngestDocumentInput) {
@@ -31,12 +32,15 @@ export async function ingestDocument(input: IngestDocumentInput) {
   });
   const documentsRepo = createDocumentsRepo(input.db);
   const ingestionRepo = createIngestionRepo(input.db);
+  const manageIngestionStatus = input.manageIngestionStatus ?? true;
 
-  await ingestionRepo.updateStatus({
-    organizationId: input.organizationId,
-    ingestionId: input.ingestionId,
-    status: "running",
-  });
+  if (manageIngestionStatus) {
+    await ingestionRepo.updateStatus({
+      organizationId: input.organizationId,
+      ingestionId: input.ingestionId,
+      status: "running",
+    });
+  }
   await documentsRepo.updateStatus(input.organizationId, input.documentId, "ingesting");
   log.info("document ingestion started", { mimeType: input.mimeType, title: input.title, contentLength: input.content.length });
 
@@ -53,12 +57,14 @@ export async function ingestDocument(input: IngestDocumentInput) {
     if (chunks.length === 0) {
       log.warn("document ingestion produced no chunks", { mimeType: input.mimeType, title: input.title });
       await documentsRepo.updateStatus(input.organizationId, input.documentId, "ready");
-      await ingestionRepo.updateStatus({
-        organizationId: input.organizationId,
-        ingestionId: input.ingestionId,
-        status: "completed",
-        chunkCount: 0,
-      });
+      if (manageIngestionStatus) {
+        await ingestionRepo.updateStatus({
+          organizationId: input.organizationId,
+          ingestionId: input.ingestionId,
+          status: "completed",
+          chunkCount: 0,
+        });
+      }
       return { chunkCount: 0 };
     }
 
@@ -83,24 +89,28 @@ export async function ingestDocument(input: IngestDocumentInput) {
     await chunkStore.upsertChunks(documentChunks);
     log.info("document chunks stored", { chunkCount: documentChunks.length });
     await documentsRepo.updateStatus(input.organizationId, input.documentId, "ready");
-    await ingestionRepo.updateStatus({
-      organizationId: input.organizationId,
-      ingestionId: input.ingestionId,
-      status: "completed",
-      chunkCount: documentChunks.length,
-    });
+    if (manageIngestionStatus) {
+      await ingestionRepo.updateStatus({
+        organizationId: input.organizationId,
+        ingestionId: input.ingestionId,
+        status: "completed",
+        chunkCount: documentChunks.length,
+      });
+    }
 
     return { chunkCount: documentChunks.length };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown ingestion error";
     log.error("document ingestion failed", { error: serializeError(error) });
     await documentsRepo.updateStatus(input.organizationId, input.documentId, "failed");
-    await ingestionRepo.updateStatus({
-      organizationId: input.organizationId,
-      ingestionId: input.ingestionId,
-      status: "failed",
-      error: message,
-    });
+    if (manageIngestionStatus) {
+      await ingestionRepo.updateStatus({
+        organizationId: input.organizationId,
+        ingestionId: input.ingestionId,
+        status: "failed",
+        error: message,
+      });
+    }
     throw error;
   }
 }
