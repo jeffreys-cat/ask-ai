@@ -46,6 +46,14 @@ export interface RetrievedChunk extends Omit<DocumentChunk, "embedding"> {
     keywordScore?: number;
     vectorRank?: number;
     keywordRank?: number;
+    fusionScore?: number;
+    fusionRank?: number;
+    rerank?: {
+      provider: string;
+      model: string;
+      score: number;
+      rank: number;
+    };
     matchedBy: Array<"vector" | "keyword">;
   };
 }

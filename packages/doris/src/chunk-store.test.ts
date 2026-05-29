@@ -57,6 +57,30 @@ describe("hybrid chunk retrieval", () => {
     expect(normalizeCandidateK(500)).toBe(50);
   });
 
+  it("returns a wider fused candidate set when candidateK is explicit", async () => {
+    const execute = vi.fn().mockResolvedValueOnce([
+      [
+        { organizationId: "org-1", documentId: "doc-a", chunkId: "a", content: "A", metadata: "{}", vectorScore: 0.9 },
+        { organizationId: "org-1", documentId: "doc-b", chunkId: "b", content: "B", metadata: "{}", vectorScore: 0.8 },
+        { organizationId: "org-1", documentId: "doc-c", chunkId: "c", content: "C", metadata: "{}", vectorScore: 0.7 },
+      ],
+    ]);
+    const store = createChunkStore({ execute } as never);
+
+    const chunks = await store.searchChunks({
+      organizationId: "org-1",
+      query: "",
+      queryEmbedding: [1, 0],
+      topK: 1,
+      candidateK: 3,
+    });
+
+    const [vectorSql] = execute.mock.calls[0] as [string, string[]];
+    expect(vectorSql).toContain("LIMIT 3");
+    expect(chunks.map((chunk) => chunk.chunkId)).toEqual(["a", "b", "c"]);
+    expect(chunks[0]?.retrieval).toMatchObject({ fusionScore: expect.any(Number), fusionRank: 1 });
+  });
+
   it("falls back to vector candidates when keyword search fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const execute = vi

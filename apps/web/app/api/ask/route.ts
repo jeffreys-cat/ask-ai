@@ -48,7 +48,7 @@ export async function POST(request: Request) {
         organizationId: ctx.organizationId,
         userId: ctx.userId,
         question,
-        metadata: { projectId: body.projectId, documentIds, topK: body.topK, filters, retrievalMode: "hybrid+metadata_filters" },
+        metadata: { projectId: body.projectId, documentIds, topK: body.topK, filters, retrievalMode: "hybrid+rrf+rerank" },
       });
     }
 

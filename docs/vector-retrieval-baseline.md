@@ -12,7 +12,7 @@
 - 检索时为用户问题生成 query embedding。
 - Doris 在 `document_chunks` 表中用 `INNER_PRODUCT(embedding, queryEmbedding)` 计算相似度分数。
 - 系统按分数返回 topK chunk，并把这些 chunk 打包成上下文交给 chat model 生成答案。
-- `rerankChunks` 当前只是按向量分数重新排序，没有引入额外 rerank 模型。
+- 当时的 `rerankChunks` 只是按向量分数重新排序，没有引入额外 rerank 模型。
 
 关键代码路径：
 
@@ -96,7 +96,7 @@ flowchart TD
 
 - 混合检索：向量检索 + BM25 / 全文关键词检索。目标是提升精确术语、错误码、配置项、API 名称等关键词问题的召回能力。
 - 元数据过滤：支持按版本、语言、产品线、权限、发布时间等字段过滤。目标是减少跨版本、跨产品或越权文档进入上下文。
-- 二阶段 rerank：先召回 top 50 / top 100，再用 cross-encoder 或 LLM reranker 重新排序。目标是提升最终进入上下文的 chunk 相关性。
+- 二阶段 rerank：当前混合检索基线已加入 managed cross-encoder reranker，见 `docs/hybrid-retrieval-baseline.md`。
 - query rewrite：把用户问题改写成更适合检索的 query。目标是处理口语化、省略上下文、多轮追问和模糊问题。
 - 多路召回：标题、正文、代码块、FAQ、anchor path 分开召回再融合。目标是让不同结构的文档内容用更合适的检索通道进入候选集。
 

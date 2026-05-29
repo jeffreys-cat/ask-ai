@@ -1,6 +1,17 @@
 import { SpanType } from "@mastra/core/observability";
 import type { AccessContext, AskAgentInput, AskStreamEvent, Citation, MetadataFilters, RetrievedChunk } from "@selectdb/shared";
-import { buildCitations, packContext, retrieveRelevantChunks, type EmbeddingProvider, type Retriever } from "@selectdb/rag";
+import {
+  buildCitations,
+  packContext,
+  rerankCandidateKFromEnv,
+  rerankerFromEnv,
+  rerankChunks,
+  rerankFailOpenFromEnv,
+  retrieveChunkCandidates,
+  type EmbeddingProvider,
+  type Reranker,
+  type Retriever,
+} from "@selectdb/rag";
 import { mastra } from "../index";
 import { buildDocAnswerMessages } from "../agents/doc-answer.agent";
 import { chatConfigFromEnv, streamOpenAICompatibleChat, type ChatStreamConfig } from "../../streaming/answer-stream";
@@ -17,6 +28,9 @@ export interface AskDocsWorkflowInput {
   includeDebugChunks?: boolean;
   agent?: AskAgentInput;
   chat?: ChatStreamConfig;
+  reranker?: Reranker | null;
+  rerankCandidateK?: number;
+  rerankFailOpen?: boolean;
 }
 
 export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGenerator<AskStreamEvent> {
@@ -32,7 +46,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       documentIds: input.documentIds,
       filters: input.filters,
       topK: input.topK,
-      retrievalMode: "hybrid+metadata_filters",
+      retrievalMode: "hybrid+rrf+rerank",
     },
     tags: ["ask-ai", "litefuse"],
     attributes: {
@@ -46,7 +60,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       filters: input.filters,
       topK: input.topK,
       includeDebugChunks: input.includeDebugChunks,
-      retrievalMode: "hybrid+metadata_filters",
+      retrievalMode: "hybrid+rrf+rerank",
     },
   });
   let chunks: RetrievedChunk[] = [];
@@ -55,38 +69,45 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
   let failed = false;
 
   try {
+    const topK = normalizeWorkflowTopK(input.topK);
+    const reranker = input.reranker === null ? undefined : (input.reranker ?? rerankerFromEnv());
+    const rerankCandidateK = reranker ? (input.rerankCandidateK ?? rerankCandidateKFromEnv(topK)) : undefined;
+    const rerankFailOpen = input.rerankFailOpen ?? rerankFailOpenFromEnv();
     const retrievalSpan = rootSpan?.createChildSpan({
-      name: "Retrieve relevant document chunks",
+      name: "Retrieve document chunk candidates",
       type: SpanType.RAG_VECTOR_OPERATION,
       input: {
         question: input.question,
         organizationId: input.organizationId,
         documentIds: input.documentIds,
         filters: input.filters,
-        topK: input.topK,
+        topK,
+        candidateK: rerankCandidateK,
       },
       attributes: {
         operation: "query",
         store: "doris",
         indexName: "document_chunks",
-        topK: input.topK,
+        topK,
       },
       metadata: {
         organizationId: input.organizationId,
         documentIds: input.documentIds,
         filters: input.filters,
-        topK: input.topK,
-        retrievalMode: "hybrid+metadata_filters",
+        topK,
+        candidateK: rerankCandidateK,
+        retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
       },
     });
 
     try {
-      chunks = await retrieveRelevantChunks({
+      chunks = await retrieveChunkCandidates({
         retriever: input.retriever,
         embeddings: input.embeddings,
         organizationId: input.organizationId,
         question: input.question,
-        topK: input.topK,
+        topK,
+        candidateK: rerankCandidateK,
         documentIds: input.documentIds,
         filters: input.filters,
         accessContext: input.accessContext,
@@ -99,6 +120,54 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       });
     } catch (error) {
       retrievalSpan?.error({ error: asError(error) });
+      throw error;
+    }
+
+    const rerankSpan = rootSpan?.createChildSpan({
+      name: "Rerank document chunk candidates",
+      type: SpanType.RAG_VECTOR_OPERATION,
+      input: {
+        question: input.question,
+        candidateCount: chunks.length,
+        topK,
+      },
+      attributes: {
+        operation: "query",
+        store: reranker?.provider ?? "none",
+        indexName: "document_chunks",
+        topK,
+      },
+      metadata: {
+        provider: reranker?.provider ?? "none",
+        model: reranker?.model,
+        topK,
+        candidateK: rerankCandidateK,
+        failOpen: rerankFailOpen,
+        retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
+      },
+    });
+
+    try {
+      const startedAt = performance.now();
+      const result = await rerankChunks({
+        query: input.question,
+        chunks,
+        topK,
+        reranker,
+        failOpen: rerankFailOpen,
+      });
+      chunks = result.chunks;
+      rerankSpan?.end({
+        output: {
+          chunkCount: chunks.length,
+          usedRerank: result.usedRerank,
+          fallback: result.fallback,
+          error: result.error,
+          latencyMs: elapsed(startedAt),
+        },
+      });
+    } catch (error) {
+      rerankSpan?.error({ error: asError(error) });
       throw error;
     }
 
@@ -171,6 +240,15 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     }
     await observability?.flush();
   }
+}
+
+function normalizeWorkflowTopK(topK: number | undefined) {
+  if (topK === undefined || !Number.isFinite(topK)) return 8;
+  return Math.min(Math.max(Math.trunc(topK), 1), 50);
+}
+
+function elapsed(startedAt: number) {
+  return Math.round(performance.now() - startedAt);
 }
 
 function asError(error: unknown) {

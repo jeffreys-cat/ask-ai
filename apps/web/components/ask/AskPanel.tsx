@@ -978,12 +978,14 @@ function RetrievalScoreGrid({
 
   const values = [
     { label: "Final", value: score },
+    { label: "Rerank", value: retrieval?.rerank?.score },
+    { label: "Fusion", value: retrieval?.fusionScore },
     { label: "Vector", value: retrieval?.vectorScore },
     { label: "BM25", value: retrieval?.keywordScore },
   ];
 
   return (
-    <dl className="mt-3 grid min-w-0 grid-cols-3 gap-1.5">
+    <dl className="mt-3 grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-5">
       {values.map((item) => (
         <div key={item.label} className="min-w-0 rounded-md border bg-background px-2 py-1.5">
           <dt className="text-[10px] font-medium uppercase text-muted-foreground">{item.label}</dt>

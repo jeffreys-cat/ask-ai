@@ -41,7 +41,7 @@ export async function POST(request: Request) {
         topK,
         filters,
         apiKeyId: key.id,
-        retrievalMode: "hybrid+metadata_filters",
+        retrievalMode: "hybrid+rrf+rerank",
       },
     });
 

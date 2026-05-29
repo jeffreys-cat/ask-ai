@@ -12,6 +12,7 @@ export interface SearchChunksInput {
   query: string;
   queryEmbedding: number[];
   topK: number;
+  candidateK?: number;
   documentIds?: string[];
   filters?: MetadataFilters;
   accessContext?: AccessContext;
@@ -95,7 +96,9 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
 
     async searchChunks(input: SearchChunksInput): Promise<RetrievedChunk[]> {
       const topK = normalizeTopK(input.topK);
-      const candidateK = normalizeCandidateK(topK);
+      const hasExplicitCandidateK = input.candidateK !== undefined;
+      const candidateK = hasExplicitCandidateK ? normalizeExplicitCandidateK(input.candidateK, topK) : normalizeCandidateK(topK);
+      const resultK = hasExplicitCandidateK ? candidateK : topK;
       const predicate = buildSearchPredicate(input);
 
       const [vectorRows] = await withDorisRetry(
@@ -129,7 +132,7 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
 
       const vectorCandidates = mapSearchRows(vectorRows as Array<Record<string, unknown>>, "vectorScore");
       const keywordQuery = input.query.trim();
-      if (!keywordQuery) return fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK });
+      if (!keywordQuery) return fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK: resultK });
 
       try {
         const [keywordRows] = await withDorisRetry(
@@ -162,7 +165,7 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
           },
         );
         const keywordCandidates = mapSearchRows(keywordRows as Array<Record<string, unknown>>, "keywordScore");
-        return fuseRetrievedChunks({ vector: vectorCandidates, keyword: keywordCandidates, topK });
+        return fuseRetrievedChunks({ vector: vectorCandidates, keyword: keywordCandidates, topK: resultK });
       } catch (error) {
         log.warn("doris keyword search failed; falling back to vector results", {
           operation: "searchChunks.keyword",
@@ -173,7 +176,7 @@ export function createChunkStore(pool: DorisPool, options: ChunkStoreOptions = {
           hasFilters: hasMetadataFilters(input.filters),
           error: serializeError(error),
         });
-        return fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK });
+        return fuseRetrievedChunks({ vector: vectorCandidates, keyword: [], topK: resultK });
       }
     },
   };
@@ -306,7 +309,17 @@ export function fuseRetrievedChunks(input: {
   return [...merged.values()]
     .sort((a, b) => b.score - a.score || a.bestRank - b.bestRank || a.documentId.localeCompare(b.documentId) || a.chunkId.localeCompare(b.chunkId))
     .slice(0, topK)
-    .map(({ bestRank: _bestRank, ...chunk }) => chunk);
+    .map(({ bestRank: _bestRank, ...chunk }, index) => {
+      const fusionScore = chunk.score;
+      return {
+        ...chunk,
+        retrieval: {
+          ...chunk.retrieval,
+          fusionScore,
+          fusionRank: index + 1,
+        },
+      };
+    });
 }
 
 function addBranch(
@@ -351,6 +364,11 @@ function normalizeTopK(topK: number) {
 
 export function normalizeCandidateK(topK: number) {
   return Math.min(Math.max(normalizeTopK(topK) * 4, 20), 50);
+}
+
+function normalizeExplicitCandidateK(candidateK: number | undefined, topK: number) {
+  if (candidateK === undefined || !Number.isFinite(candidateK)) return normalizeTopK(topK);
+  return Math.min(Math.max(Math.trunc(candidateK), normalizeTopK(topK)), 100);
 }
 
 function normalizeBatchSize(value: string | undefined, fallback: number) {
