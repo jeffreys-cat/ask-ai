@@ -4,6 +4,7 @@ import {
   scoreAnswerHelpfulness,
   scoreCitationCorrectness,
   scoreGroundedness,
+  scoreLanguageConsistency,
   scoreRefusalCorrectness,
   scoreRetrievalRecall,
   type AskDocsEvalOutput,
@@ -62,6 +63,29 @@ describe("ask docs eval scoring", () => {
     expect(scoreCitationCorrectness(params).value).toBe(1);
     expect(scoreAnswerHelpfulness(params).value).toBeGreaterThan(0.5);
     expect(scoreRefusalCorrectness(params).value).toBe(1);
+    expect(scoreLanguageConsistency(params).value).toBe(1);
+  });
+
+  it("scores answer language consistency with the input question", () => {
+    const baseParams = {
+      expected: {},
+      metadata: {},
+      output: {
+        answer: "需要先设置 OPENAI_API_KEY，然后启动服务。",
+        citations: [],
+        retrievedChunks: [],
+      },
+    };
+
+    expect(scoreLanguageConsistency({ ...baseParams, input: { question: "需要配置哪些环境变量？" } }).value).toBe(1);
+    expect(scoreLanguageConsistency({ ...baseParams, input: { question: "Which env vars are required?" } }).value).toBe(0);
+    expect(
+      scoreLanguageConsistency({
+        ...baseParams,
+        input: { question: "需要配置哪些环境变量？" },
+        output: { ...baseParams.output, answer: "Set OPENAI_API_KEY before starting the service." },
+      }).value,
+    ).toBe(0);
   });
 
   it("scores no-context refusal as correct only without citations", () => {

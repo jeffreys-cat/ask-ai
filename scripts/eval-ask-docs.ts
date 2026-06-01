@@ -1,46 +1,46 @@
 import { readFile } from "node:fs/promises";
-import { config } from "dotenv";
-import { createAskRepo, createDb, createDocumentsRepo, createProjectsRepo } from "@selectdb/db";
-import { createChunkStore, createDorisPool } from "@selectdb/doris";
-import {
-  ASK_DOCS_EVAL_DATASET_NAME,
-  createAskDocsEvaluators,
-  createAskDocsRunEvaluators,
-  getLitefuseClient,
-  mastra,
-  normalizeAskDocsEvalItem,
-  requestRewriterFromEnv,
-  runAskDocsWorkflow,
-  type AskDocsEvalInput,
-  type AskDocsEvalOutput,
-  type AskDocsEvalExpected,
-  type AskDocsEvalMetadata,
+import { loadEnvConfig } from "@next/env";
+import type * as AiModule from "@selectdb/ai";
+import type * as DbModule from "@selectdb/db";
+import type * as DorisModule from "@selectdb/doris";
+import type {
+  AskDocsEvalInput,
+  AskDocsEvalExpected,
+  AskDocsEvalMetadata,
+  AskDocsEvalOutput,
 } from "@selectdb/ai";
-import { embeddingProviderFromEnv } from "@selectdb/rag";
 import type { Citation, RetrievedChunk } from "@selectdb/shared";
-import type { ExperimentItem, ExperimentTaskParams } from "@langfuse/client";
+import type { Evaluation, ExperimentItem, ExperimentItemResult, ExperimentParams, ExperimentResult, ExperimentTaskParams } from "@langfuse/client";
 
-config({ path: ".env.local", quiet: true });
-config({ quiet: true });
+loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
+
+type Ai = typeof AiModule;
+type Db = typeof DbModule;
+type Doris = typeof DorisModule;
+type Rag = typeof import("@selectdb/rag");
+type Runtime = Awaited<ReturnType<typeof loadRuntime>>;
 
 async function main() {
+  const runtime = await loadRuntime();
+  const { ai, db: dbModule, doris: dorisModule } = runtime;
   const args = parseArgs(process.argv.slice(2));
-  const client = getLitefuseClient();
-  if (!client) throw new Error("LITEFUSE_PUBLIC_KEY and LITEFUSE_SECRET_KEY are required to run evals");
+  const client = ai.getLitefuseClient();
+  if (!client && !args.local) throw new Error("LITEFUSE_PUBLIC_KEY and LITEFUSE_SECRET_KEY are required to run dataset evals");
 
-  const db = createDb();
-  const doris = createDorisPool();
-  const askRepo = createAskRepo(db);
+  const db = dbModule.createDb();
+  const doris = dorisModule.createDorisPool();
+  const askRepo = dbModule.createAskRepo(db);
   const runName = args.runName ?? process.env.LITEFUSE_EVAL_RUN_NAME ?? `ask-docs-${new Date().toISOString()}`;
-  const datasetName = args.dataset ?? process.env.LITEFUSE_EVAL_DATASET ?? ASK_DOCS_EVAL_DATASET_NAME;
+  const datasetName = args.dataset ?? process.env.LITEFUSE_EVAL_DATASET ?? ai.ASK_DOCS_EVAL_DATASET_NAME;
   const minItems = numberFrom(args.minItems ?? process.env.LITEFUSE_EVAL_MIN_ITEMS, 30);
 
   try {
     const task = createAskDocsTask({
+      runtime,
       db,
       doris,
       askRepo,
-      defaultOrganizationId: process.env.LITEFUSE_EVAL_ORGANIZATION_ID,
+      defaultOrganizationId: defaultEvalOrganizationId(),
       defaultTopK: numberFrom(process.env.LITEFUSE_EVAL_TOP_K, 8),
     });
     const experiment = {
@@ -54,15 +54,15 @@ async function main() {
         release: process.env.LITEFUSE_RELEASE ?? process.env.APP_VERSION ?? process.env.GIT_COMMIT,
       },
       task,
-      evaluators: createAskDocsEvaluators(),
-      runEvaluators: createAskDocsRunEvaluators(),
+      evaluators: ai.createAskDocsEvaluators(),
+      runEvaluators: ai.createAskDocsRunEvaluators(),
       maxConcurrency: numberFrom(args.maxConcurrency ?? process.env.LITEFUSE_EVAL_MAX_CONCURRENCY, 2),
       datasetVersion: args.datasetVersion ?? process.env.LITEFUSE_EVAL_DATASET_VERSION,
     };
 
     const result = args.local
-      ? await runLocalExperiment({ client, file: args.local, minItems, experiment })
-      : await runLitefuseDatasetExperiment({ client, datasetName, minItems, experiment });
+      ? await runLocalExperiment({ file: args.local, minItems, experiment })
+      : await runLitefuseDatasetExperiment({ client: requiredLitefuseClient(client), datasetName, minItems, experiment });
 
     console.log(await result.format({ includeItemResults: args.includeItems === "true" }));
     const gate = result.runEvaluations.find((evaluation) => evaluation.name === "regression_gate");
@@ -70,23 +70,32 @@ async function main() {
       throw new Error("Ask docs eval regression gate failed");
     }
   } finally {
-    await client.flush();
+    await client?.flush();
     await doris.end();
     await db.end();
   }
 }
 
+async function loadRuntime() {
+  const [ai, db, doris, rag] = await Promise.all([
+    import("../packages/ai/src/index"),
+    import("../packages/db/src/index"),
+    import("../packages/doris/src/index"),
+    import("../packages/rag/src/index"),
+  ]);
+  return { ai, db, doris, rag };
+}
+
 async function runLocalExperiment(input: {
-  client: NonNullable<ReturnType<typeof getLitefuseClient>>;
   file: string;
   minItems: number;
-  experiment: Omit<Parameters<NonNullable<ReturnType<typeof getLitefuseClient>>["experiment"]["run"]>[0], "data">;
+  experiment: Omit<ExperimentParams<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>, "data">;
 }) {
   const data = await readLocalItems(input.file);
   if (data.length < input.minItems) {
     throw new Error(`Local eval file ${input.file} has ${data.length} items; expected at least ${input.minItems}`);
   }
-  return input.client.experiment.run({ ...input.experiment, data });
+  return runLocalDataExperiment({ ...input.experiment, data });
 }
 
 async function runLitefuseDatasetExperiment(input: {
@@ -102,25 +111,163 @@ async function runLitefuseDatasetExperiment(input: {
   return dataset.runExperiment(input.experiment);
 }
 
+async function runLocalDataExperiment(
+  config: ExperimentParams<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>,
+): Promise<ExperimentResult<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>> {
+  const runName = config.runName ?? `${config.name} - ${new Date().toISOString()}`;
+  const experimentId = crypto.randomUUID();
+  const batchSize = Math.max(1, Math.floor(config.maxConcurrency ?? 50));
+  const itemResults: ExperimentItemResult<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>[] = [];
+
+  for (let index = 0; index < config.data.length; index += batchSize) {
+    const batch = config.data.slice(index, index + batchSize);
+    const settled = await Promise.allSettled(batch.map((item) => runLocalExperimentItem({ item, config })));
+    for (const result of settled) {
+      if (result.status === "fulfilled") {
+        itemResults.push(result.value);
+      } else {
+        const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        console.error(`Task failed with error: ${message}. Skipping item.`);
+      }
+    }
+  }
+
+  const runEvaluations = (await Promise.all((config.runEvaluators ?? []).map((runEvaluator) => runEvaluator({ itemResults })))).flat();
+
+  return {
+    experimentId,
+    runName,
+    itemResults,
+    runEvaluations,
+    format: async (options) =>
+      formatLocalExperimentResult({
+        name: config.name,
+        runName,
+        description: config.description,
+        itemResults,
+        originalData: config.data,
+        runEvaluations,
+        includeItemResults: options?.includeItemResults ?? false,
+      }),
+  };
+}
+
+async function runLocalExperimentItem(input: {
+  item: ExperimentItem<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>;
+  config: ExperimentParams<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>;
+}): Promise<ExperimentItemResult<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>> {
+  if (input.item.input === undefined) throw new Error("Experiment item is missing input. Skipping item.");
+
+  const output = await input.config.task(input.item);
+  const evaluations = (
+    await Promise.all((input.config.evaluators ?? []).map((evaluator) => evaluator({
+      input: input.item.input,
+      expectedOutput: input.item.expectedOutput,
+      output,
+      metadata: input.item.metadata,
+    })))
+  ).flat();
+
+  return {
+    input: input.item.input,
+    expectedOutput: input.item.expectedOutput,
+    item: input.item,
+    output,
+    evaluations,
+  };
+}
+
+function formatLocalExperimentResult(input: {
+  name: string;
+  runName: string;
+  description?: string;
+  itemResults: ExperimentItemResult<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>[];
+  originalData: ExperimentItem<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>[];
+  runEvaluations: Evaluation[];
+  includeItemResults: boolean;
+}) {
+  if (input.itemResults.length === 0) return "No experiment results to display.";
+
+  let output = "";
+  if (input.includeItemResults) {
+    for (let index = 0; index < input.itemResults.length; index += 1) {
+      const result = input.itemResults[index];
+      const originalItem = input.originalData[index];
+      output += `\n${index + 1}. Item ${index + 1}:\n`;
+      output += `   Input:    ${formatValue(originalItem?.input)}\n`;
+      output += `   Expected: ${formatValue(originalItem?.expectedOutput ?? result.expectedOutput ?? null)}\n`;
+      output += `   Actual:   ${formatValue(result.output)}\n`;
+      if (result.evaluations.length > 0) {
+        output += "   Scores:\n";
+        for (const evaluation of result.evaluations) {
+          const score = typeof evaluation.value === "number" ? evaluation.value.toFixed(3) : evaluation.value;
+          output += `     - ${evaluation.name}: ${score}\n`;
+          if (evaluation.comment) output += `       ${evaluation.comment}\n`;
+        }
+      }
+    }
+  } else {
+    output += `Individual Results: Hidden (${input.itemResults.length} items)\n`;
+    output += "Call format({ includeItemResults: true }) to view them\n";
+  }
+
+  const evaluationNames = new Set(input.itemResults.flatMap((result) => result.evaluations.map((evaluation) => evaluation.name)));
+  output += `\n${"-".repeat(50)}\n`;
+  output += `Experiment: ${input.name}\n`;
+  output += `Run name: ${input.runName}`;
+  if (input.description) output += ` - ${input.description}`;
+  output += `\n${input.itemResults.length} items`;
+
+  if (evaluationNames.size > 0) {
+    output += "\nEvaluations:";
+    for (const name of evaluationNames) output += `\n  - ${name}`;
+    output += "\n\nAverage Scores:";
+    for (const name of evaluationNames) {
+      const scores = input.itemResults
+        .flatMap((result) => result.evaluations)
+        .filter((evaluation) => evaluation.name === name && typeof evaluation.value === "number")
+        .map((evaluation) => evaluation.value as number);
+      if (scores.length > 0) output += `\n  - ${name}: ${average(scores).toFixed(3)}`;
+    }
+    output += "\n";
+  }
+
+  if (input.runEvaluations.length > 0) {
+    output += "\nRun Evaluations:";
+    for (const evaluation of input.runEvaluations) {
+      const score = typeof evaluation.value === "number" ? evaluation.value.toFixed(3) : evaluation.value;
+      output += `\n  - ${evaluation.name}: ${score}`;
+      if (evaluation.comment) output += `\n    ${evaluation.comment}`;
+    }
+    output += "\n";
+  }
+
+  return output;
+}
+
 async function readLocalItems(path: string): Promise<ExperimentItem<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>[]> {
   const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
   const object = raw && typeof raw === "object" ? (raw as { items?: unknown }) : {};
   const items = Array.isArray(raw) ? raw : Array.isArray(object.items) ? object.items : [];
   if (items.length === 0) throw new Error(`No eval items found in ${path}`);
+  const { normalizeAskDocsEvalItem } = await import("../packages/ai/src/index");
   return items.map((item) => normalizeAskDocsEvalItem(item as { input?: unknown; expectedOutput?: unknown; metadata?: unknown }));
 }
 
 function createAskDocsTask(input: {
-  db: ReturnType<typeof createDb>;
-  doris: ReturnType<typeof createDorisPool>;
-  askRepo: ReturnType<typeof createAskRepo>;
+  runtime: Runtime;
+  db: ReturnType<Db["createDb"]>;
+  doris: ReturnType<Doris["createDorisPool"]>;
+  askRepo: ReturnType<Db["createAskRepo"]>;
   defaultOrganizationId?: string;
   defaultTopK: number;
 }) {
   return async (params: ExperimentTaskParams<unknown, unknown, Record<string, unknown>>): Promise<AskDocsEvalOutput> => {
-    const item = normalizeAskDocsEvalItem(params);
+    const item = input.runtime.ai.normalizeAskDocsEvalItem(params);
     const organizationId = item.input.organizationId ?? input.defaultOrganizationId;
-    if (!organizationId) throw new Error("Eval item organizationId or LITEFUSE_EVAL_ORGANIZATION_ID is required");
+    if (!organizationId) {
+      throw new Error("Eval item organizationId, LITEFUSE_EVAL_ORGANIZATION_ID, INIT_ORGANIZATION_ID, or DEV_ORGANIZATION_ID is required");
+    }
 
     const documentIds = await resolveDocumentIds({
       db: input.db,
@@ -149,18 +296,18 @@ function createAskDocsTask(input: {
     let citations: Citation[] = [];
     let retrievedChunks: RetrievedChunk[] = [];
 
-    for await (const event of runAskDocsWorkflow({
+    for await (const event of input.runtime.ai.runAskDocsWorkflow({
       organizationId,
       question: item.input.question,
       retriever: {
-        search: (searchInput) => createChunkStore(input.doris).searchChunks(searchInput),
+        search: (searchInput) => input.runtime.doris.createChunkStore(input.doris).searchChunks(searchInput),
       },
-      embeddings: embeddingProviderFromEnv(),
+      embeddings: input.runtime.rag.embeddingProviderFromEnv(),
       documentIds,
       topK: item.input.topK ?? input.defaultTopK,
       includeDebugChunks: true,
-      agent: mastra.agents.docAnswerAgent,
-      requestRewriter: requestRewriterFromEnv(),
+      agent: input.runtime.ai.mastra.agents.docAnswerAgent,
+      requestRewriter: input.runtime.ai.requestRewriterFromEnv(),
     })) {
       if (event.type === "answer_delta") answer += event.delta;
       if (event.type === "retrieved_chunks") retrievedChunks = event.chunks;
@@ -176,8 +323,13 @@ function createAskDocsTask(input: {
   };
 }
 
+function requiredLitefuseClient(client: ReturnType<Ai["getLitefuseClient"]>): NonNullable<ReturnType<Ai["getLitefuseClient"]>> {
+  if (!client) throw new Error("LITEFUSE_PUBLIC_KEY and LITEFUSE_SECRET_KEY are required to run dataset evals");
+  return client;
+}
+
 async function resolveDocumentIds(input: {
-  db: ReturnType<typeof createDb>;
+  db: ReturnType<Db["createDb"]>;
   organizationId: string;
   projectId?: string;
   documentIds?: string[];
@@ -185,11 +337,21 @@ async function resolveDocumentIds(input: {
   if (input.documentIds?.length) return input.documentIds;
   if (!input.projectId) return undefined;
 
+  const { createDocumentsRepo, createProjectsRepo } = await import("../packages/db/src/index");
   const project = await createProjectsRepo(input.db).findById(input.organizationId, input.projectId);
   if (!project) throw new Error(`Project not found: ${input.projectId}`);
   const documents = await createDocumentsRepo(input.db).listReadyByProject(input.organizationId, input.projectId);
   if (documents.length === 0) throw new Error(`Project has no ready documents: ${input.projectId}`);
   return documents.map((document) => document.id);
+}
+
+function defaultEvalOrganizationId() {
+  return (
+    process.env.LITEFUSE_EVAL_ORGANIZATION_ID?.trim() ||
+    process.env.INIT_ORGANIZATION_ID?.trim() ||
+    process.env.DEV_ORGANIZATION_ID?.trim() ||
+    "dev-org"
+  );
 }
 
 function parseArgs(args: string[]) {
@@ -215,6 +377,15 @@ function parseArgs(args: string[]) {
 
 function elapsed(startedAt: number) {
   return Math.round(performance.now() - startedAt);
+}
+
+function formatValue(value: unknown) {
+  if (typeof value === "string") return value.length > 50 ? `${value.substring(0, 47)}...` : value;
+  return JSON.stringify(value);
+}
+
+function average(values: number[]) {
+  return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function numberFrom(value: string | number | undefined, fallback: number) {

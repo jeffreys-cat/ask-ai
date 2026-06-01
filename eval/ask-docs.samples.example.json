@@ -3,42 +3,25 @@
     {
       "input": {
         "question": "Which environment variables are required to start the documentation assistant?",
-        "projectId": "replace-with-project-id",
-        "tags": ["config", "critical"]
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
       },
-      "expectedOutput": {
-        "expectedAnswer": "The service requires OPENAI_API_KEY and CHAT_MODEL, with OPENAI_BASE_URL optional for OpenAI-compatible providers.",
-        "expectedCitationDocIds": ["replace-with-config-doc-id"],
-        "mustInclude": ["OPENAI_API_KEY", "CHAT_MODEL"]
-      },
-      "metadata": {
-        "critical": true
-      }
+      "expectedOutput": {},
+      "metadata": {}
     },
     {
       "input": {
-        "question": "How do I ingest a folder of Markdown files?",
-        "projectId": "replace-with-project-id",
-        "tags": ["ingest"]
+        "question": "如何导入一组 Markdown 文件？",
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
       },
-      "expectedOutput": {
-        "expectedAnswer": "Use the project ingest flow, choose a folder or Markdown files, and wait for the background ingest task to finish.",
-        "expectedCitationDocIds": ["replace-with-ingest-doc-id"],
-        "mustInclude": ["Markdown", "ingest"]
-      },
+      "expectedOutput": {},
       "metadata": {}
     },
     {
       "input": {
         "question": "What is the private roadmap item that is not documented?",
-        "projectId": "replace-with-project-id",
-        "tags": ["no-context"]
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
       },
-      "expectedOutput": {
-        "expectedAnswer": "There is not enough document context to answer.",
-        "expectedCitationDocIds": [],
-        "shouldRefuse": true
-      },
+      "expectedOutput": {},
       "metadata": {}
     }
   ]

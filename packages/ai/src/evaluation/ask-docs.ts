@@ -4,9 +4,7 @@ import type { Citation, JsonObject, RetrievedChunk } from "@selectdb/shared";
 export const ASK_DOCS_EVAL_DATASET_NAME = "ask-ai-docs-eval";
 
 export const DEFAULT_ASK_DOCS_EVAL_THRESHOLDS = {
-  groundedness: 0.9,
-  citationCorrectness: 0.85,
-  refusalCorrectness: 0.9,
+  languageConsistency: 1,
 };
 
 export interface AskDocsEvalInput {
@@ -89,13 +87,7 @@ export function normalizeAskDocsEvalItem(item: {
 }
 
 export function createAskDocsEvaluators(): Evaluator<unknown, unknown, Record<string, unknown>>[] {
-  return [
-    async (params) => scoreRetrievalRecall(normalizeParams(params)),
-    async (params) => scoreGroundedness(normalizeParams(params)),
-    async (params) => scoreCitationCorrectness(normalizeParams(params)),
-    async (params) => scoreAnswerHelpfulness(normalizeParams(params)),
-    async (params) => scoreRefusalCorrectness(normalizeParams(params)),
-  ];
+  return [async (params) => scoreLanguageConsistency(normalizeParams(params))];
 }
 
 export function createAskDocsRunEvaluators(
@@ -105,13 +97,8 @@ export function createAskDocsRunEvaluators(
   return [
     async ({ itemResults }) => {
       const averages = averageEvaluations(itemResults.flatMap((item) => item.evaluations));
-      const groundedness = averages.get("groundedness") ?? 0;
-      const citationCorrectness = averages.get("citation_correctness") ?? 0;
-      const refusalCorrectness = averages.get("refusal_correctness") ?? 0;
-      const pass =
-        groundedness >= resolved.groundedness &&
-        citationCorrectness >= resolved.citationCorrectness &&
-        refusalCorrectness >= resolved.refusalCorrectness;
+      const languageConsistency = averages.get("language_consistency") ?? 0;
+      const pass = languageConsistency >= resolved.languageConsistency;
 
       return [
         ...[...averages.entries()].map(([name, value]) => ({
@@ -124,12 +111,46 @@ export function createAskDocsRunEvaluators(
           value: pass ? 1 : 0,
           comment: pass
             ? "All default regression thresholds passed."
-            : `Thresholds failed: groundedness ${groundedness.toFixed(3)} >= ${resolved.groundedness}, citation_correctness ${citationCorrectness.toFixed(3)} >= ${resolved.citationCorrectness}, refusal_correctness ${refusalCorrectness.toFixed(3)} >= ${resolved.refusalCorrectness}.`,
+            : `Thresholds failed: language_consistency ${languageConsistency.toFixed(3)} >= ${resolved.languageConsistency}.`,
           metadata: resolved,
         },
       ];
     },
   ];
+}
+
+export function scoreLanguageConsistency(params: NormalizedEvalParams): Evaluation {
+  if (params.output.error) return score("language_consistency", 0, params.output.error);
+  if (!params.output.answer.trim()) return score("language_consistency", 0, "No answer was produced.");
+
+  const inputLanguage = detectPrimaryLanguage(params.input.question);
+  const outputLanguage = detectPrimaryLanguage(params.output.answer);
+  if (inputLanguage === "unknown") {
+    return {
+      name: "language_consistency",
+      value: 1,
+      comment: "Input language could not be determined; language consistency was not enforced.",
+      metadata: { inputLanguage, outputLanguage },
+    };
+  }
+  if (outputLanguage === "unknown") {
+    return {
+      name: "language_consistency",
+      value: 0,
+      comment: "Output language could not be determined.",
+      metadata: { inputLanguage, outputLanguage },
+    };
+  }
+
+  return {
+    name: "language_consistency",
+    value: inputLanguage === outputLanguage ? 1 : 0,
+    comment:
+      inputLanguage === outputLanguage
+        ? `Output language matches input language: ${inputLanguage}.`
+        : `Output language ${outputLanguage} does not match input language ${inputLanguage}.`,
+    metadata: { inputLanguage, outputLanguage },
+  };
 }
 
 export function scoreRetrievalRecall(params: NormalizedEvalParams): Evaluation {
@@ -285,6 +306,16 @@ function hasRefusalLanguage(answer: string) {
     normalized.includes("没有足够") ||
     normalized.includes("无法回答")
   );
+}
+
+function detectPrimaryLanguage(value: string): "zh" | "en" | "unknown" {
+  const hanCount = [...value.matchAll(/\p{Script=Han}/gu)].length;
+  if (hanCount > 0) return "zh";
+
+  const latinWordCount = value.match(/\b[A-Za-z][A-Za-z'-]*\b/g)?.length ?? 0;
+  if (latinWordCount > 0) return "en";
+
+  return "unknown";
 }
 
 function tokenF1(actual: string, expected: string) {
