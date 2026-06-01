@@ -111,7 +111,7 @@ export function createAskDocsRunEvaluators(
           value: pass ? 1 : 0,
           comment: pass
             ? "All default regression thresholds passed."
-            : `Thresholds failed: language_consistency ${languageConsistency.toFixed(3)} >= ${resolved.languageConsistency}.`,
+            : `Thresholds failed: language_consistency actual ${languageConsistency.toFixed(3)} < required ${resolved.languageConsistency}.`,
           metadata: resolved,
         },
       ];

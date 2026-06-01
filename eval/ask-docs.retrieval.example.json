@@ -1,0 +1,72 @@
+{
+  "items": [
+    {
+      "input": {
+        "question": "How do I set up Litefuse tracing for the OpenAI JS integration?",
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
+      },
+      "expectedOutput": {
+        "expectedCitationDocIds": ["7d795e43-a456-490b-92d9-749e7df333de"],
+        "mustInclude": ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_BASE_URL"]
+      },
+      "metadata": {
+        "tags": ["retrieval", "openai", "js"]
+      }
+    },
+    {
+      "input": {
+        "question": "How do I integrate Litefuse with LangChain in JavaScript?",
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
+      },
+      "expectedOutput": {
+        "expectedCitationDocIds": ["1b9a9405-a4ae-4219-a191-8ca9440fcac3"],
+        "mustInclude": ["LangChain", "Litefuse"]
+      },
+      "metadata": {
+        "tags": ["retrieval", "langchain", "js"]
+      }
+    },
+    {
+      "input": {
+        "question": "What does the Litefuse playground support for tool calling and structured outputs?",
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
+      },
+      "expectedOutput": {
+        "expectedCitationDocIds": ["9ff1956e-8443-4ebd-8254-543284a29e01"],
+        "mustInclude": ["tool calling", "structured output"]
+      },
+      "metadata": {
+        "tags": ["retrieval", "prompt-management", "playground"]
+      }
+    },
+    {
+      "input": {
+        "question": "What are environments used for in Litefuse observability?",
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
+      },
+      "expectedOutput": {
+        "expectedCitationDocIds": ["cfb4471b-cb49-45e9-a500-4660ca33004a"],
+        "mustInclude": ["environment"]
+      },
+      "metadata": {
+        "tags": ["retrieval", "observability", "environments"]
+      }
+    },
+    {
+      "input": {
+        "question": "How do local datasets work when running experiments via the SDK?",
+        "projectId": "943310b6-11b6-4e0f-b067-e54b6d3c5da6"
+      },
+      "expectedOutput": {
+        "expectedCitationDocIds": [
+          "fd4df3ee-7669-4da8-afb7-8060750da2a8",
+          "cd564aec-38f1-48f9-9355-9d3b018d1fa1"
+        ],
+        "mustInclude": ["local datasets", "traces"]
+      },
+      "metadata": {
+        "tags": ["retrieval", "experiments", "datasets"]
+      }
+    }
+  ]
+}

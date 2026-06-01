@@ -11,7 +11,10 @@
     "db:migrate": "tsx scripts/db-migrate.ts",
     "doris:init": "tsx scripts/doris-init.ts",
     "eval:ask-docs": "tsx scripts/eval-ask-docs.ts",
+    "eval:ask-docs:smoke": "tsx scripts/eval-ask-docs.ts -- --dataset ask-ai-docs-eval",
+    "eval:ask-docs:retrieval": "tsx scripts/eval-ask-docs.ts -- --dataset ask-ai-docs-retrieval-eval",
     "eval:ask-docs:seed": "tsx scripts/seed-litefuse-ask-docs-dataset.ts",
+    "eval:ask-docs:seed:retrieval": "tsx scripts/seed-litefuse-ask-docs-dataset.ts -- --file eval/ask-docs.retrieval.example.json --dataset ask-ai-docs-retrieval-eval",
     "seed:dev": "tsx scripts/seed-dev.ts",
     "worker:ingest": "pnpm --filter @selectdb/jobs worker:ingest"
   },

@@ -19,6 +19,10 @@ type Db = typeof DbModule;
 type Doris = typeof DorisModule;
 type Rag = typeof import("@selectdb/rag");
 type Runtime = Awaited<ReturnType<typeof loadRuntime>>;
+const RETRIEVAL_EVAL_DATASET_NAME = "ask-ai-docs-retrieval-eval";
+const ANSI_GREEN = "\u001b[32m";
+const ANSI_RED = "\u001b[31m";
+const ANSI_RESET = "\u001b[0m";
 
 async function main() {
   const runtime = await loadRuntime();
@@ -31,8 +35,8 @@ async function main() {
   const db = dbModule.createDb();
   const doris = dorisModule.createDorisPool();
   const askRepo = dbModule.createAskRepo(db);
-  const runName = args.runName ?? process.env.LITEFUSE_EVAL_RUN_NAME ?? `ask-docs-${new Date().toISOString()}`;
-  const datasetName = args.dataset ?? process.env.LITEFUSE_EVAL_DATASET ?? ai.ASK_DOCS_EVAL_DATASET_NAME;
+  const baseRunName = args.runName ?? process.env.LITEFUSE_EVAL_RUN_NAME ?? `ask-docs-${new Date().toISOString()}`;
+  const datasetNames = resolveDatasetNames({ ai, args });
   const minItems = numberFrom(args.minItems ?? process.env.LITEFUSE_EVAL_MIN_ITEMS, 30);
 
   try {
@@ -44,31 +48,44 @@ async function main() {
       defaultOrganizationId: defaultEvalOrganizationId(),
       defaultTopK: numberFrom(process.env.LITEFUSE_EVAL_TOP_K, 8),
     });
-    const experiment = {
-      name: "Ask AI docs quality",
-      runName,
-      description: "Evaluates document Q&A retrieval, groundedness, citations, helpfulness, and refusal behavior.",
-      metadata: {
-        datasetName,
-        promptLabel: process.env.LITEFUSE_PROMPT_LABEL,
-        promptVersion: process.env.LITEFUSE_PROMPT_VERSION,
-        release: process.env.LITEFUSE_RELEASE ?? process.env.APP_VERSION ?? process.env.GIT_COMMIT,
-      },
-      task,
-      evaluators: ai.createAskDocsEvaluators(),
-      runEvaluators: ai.createAskDocsRunEvaluators(),
-      maxConcurrency: numberFrom(args.maxConcurrency ?? process.env.LITEFUSE_EVAL_MAX_CONCURRENCY, 2),
-      datasetVersion: args.datasetVersion ?? process.env.LITEFUSE_EVAL_DATASET_VERSION,
-    };
+    const summaries: DatasetRunSummary[] = [];
+    for (const [index, datasetName] of datasetNames.entries()) {
+      const experiment = {
+        name: "Ask AI docs quality",
+        runName: datasetNames.length === 1 ? baseRunName : `${baseRunName}-${datasetName}`,
+        description: "Evaluates document Q&A retrieval, groundedness, citations, helpfulness, and refusal behavior.",
+        metadata: {
+          datasetName,
+          promptLabel: process.env.LITEFUSE_PROMPT_LABEL,
+          promptVersion: process.env.LITEFUSE_PROMPT_VERSION,
+          release: process.env.LITEFUSE_RELEASE ?? process.env.APP_VERSION ?? process.env.GIT_COMMIT,
+        },
+        task,
+        evaluators: ai.createAskDocsEvaluators(),
+        runEvaluators: ai.createAskDocsRunEvaluators(),
+        maxConcurrency: numberFrom(args.maxConcurrency ?? process.env.LITEFUSE_EVAL_MAX_CONCURRENCY, 2),
+        datasetVersion: args.datasetVersion ?? process.env.LITEFUSE_EVAL_DATASET_VERSION,
+      };
 
-    const result = args.local
-      ? await runLocalExperiment({ client, file: args.local, minItems, experiment })
-      : await runLitefuseDatasetExperiment({ client: requiredLitefuseClient(client), datasetName, minItems, experiment });
+      if (!args.local && datasetNames.length > 1) {
+        console.log(`\nRunning dataset ${index + 1}/${datasetNames.length}: ${datasetName}`);
+      }
+      const result = args.local
+        ? await runLocalExperiment({ client, file: args.local, minItems, experiment })
+        : await runLitefuseDatasetExperiment({ client: requiredLitefuseClient(client), datasetName, minItems, experiment });
 
-    console.log(await result.format({ includeItemResults: args.includeItems === "true" }));
-    const gate = result.runEvaluations.find((evaluation) => evaluation.name === "regression_gate");
-    if (gate?.value !== 1) {
-      throw new Error("Ask docs eval regression gate failed");
+      console.log(await result.format({ includeItemResults: args.includeItems === "true" }));
+      const summary = summarizeDatasetRun({ datasetName, result });
+      summaries.push(summary);
+      console.log(formatDatasetRunSummary(summary));
+    }
+
+    console.log(formatOverallSummary(summaries));
+    const failures = summaries.filter((summary) => !summary.passed);
+    if (failures.length > 0) {
+      throw new Error(
+        `Ask docs eval failed: ${failures.map((summary) => `${summary.datasetName} (${summary.failureReason})`).join("; ")}`,
+      );
     }
   } finally {
     await client?.flush();
@@ -109,6 +126,110 @@ async function setupLitefuseTracing(ai: Ai) {
   });
   provider.register();
   return provider;
+}
+
+function resolveDatasetNames(input: { ai: Ai; args: ReturnType<typeof parseArgs> }) {
+  if (input.args.local) return [input.args.dataset ?? process.env.LITEFUSE_EVAL_DATASET ?? "local"];
+  if (input.args.dataset) return [input.args.dataset];
+  if (process.env.LITEFUSE_EVAL_DATASET) return [process.env.LITEFUSE_EVAL_DATASET];
+
+  const configured = process.env.LITEFUSE_EVAL_DATASETS?.split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (configured?.length) return configured;
+
+  return [input.ai.ASK_DOCS_EVAL_DATASET_NAME, RETRIEVAL_EVAL_DATASET_NAME];
+}
+
+interface DatasetRunSummary {
+  datasetName: string;
+  passed: boolean;
+  itemCount: number;
+  failureReason: string;
+  scores: Array<{ name: string; value: number; required?: number }>;
+  failedItems: Array<{ name: string; failed: number; total: number }>;
+  gate?: Evaluation;
+}
+
+function summarizeDatasetRun(input: {
+  datasetName: string;
+  result: ExperimentResult<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>;
+}): DatasetRunSummary {
+  const gate = input.result.runEvaluations.find((evaluation) => evaluation.name === "regression_gate");
+  const passed = gate ? gate.value === 1 : true;
+  const thresholds = objectFromUnknown(gate?.metadata);
+  const scores = input.result.runEvaluations
+    .filter((evaluation) => evaluation.name.startsWith("average_") && typeof evaluation.value === "number")
+    .map((evaluation) => {
+      const name = evaluation.name.replace(/^average_/, "");
+      return {
+        name,
+        value: evaluation.value as number,
+        required: thresholdForEvaluation(thresholds, name),
+      };
+    });
+  const evaluationNames = new Set(input.result.itemResults.flatMap((item) => item.evaluations.map((evaluation) => evaluation.name)));
+  const failedItems = [...evaluationNames].flatMap((name) => {
+    const values = input.result.itemResults
+      .flatMap((item) => item.evaluations)
+      .filter((evaluation) => evaluation.name === name && typeof evaluation.value === "number")
+      .map((evaluation) => evaluation.value as number);
+    const failed = values.filter((value) => value < 1).length;
+    return failed > 0 ? [{ name, failed, total: values.length }] : [];
+  });
+
+  return {
+    datasetName: input.datasetName,
+    passed,
+    itemCount: input.result.itemResults.length,
+    failureReason: passed ? "passed" : gate?.comment ?? "regression gate failed",
+    scores,
+    failedItems,
+    gate,
+  };
+}
+
+function formatDatasetRunSummary(summary: DatasetRunSummary) {
+  const status = formatStatus(summary.passed);
+  const lines = [
+    "",
+    `Result: ${status} ${summary.datasetName} (${summary.itemCount} items)`,
+  ];
+  if (summary.scores.length > 0) {
+    lines.push("Scores:");
+    for (const score of summary.scores) {
+      const required = score.required === undefined ? "" : `, required >= ${score.required}`;
+      lines.push(`  - ${score.name}: ${score.value.toFixed(3)}${required}`);
+    }
+  }
+  if (!summary.passed) {
+    lines.push(`Failure: ${summary.failureReason}`);
+    if (summary.failedItems.length > 0) {
+      lines.push("Failed items:");
+      for (const item of summary.failedItems) lines.push(`  - ${item.name}: ${item.failed}/${item.total}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatOverallSummary(summaries: DatasetRunSummary[]) {
+  const passed = summaries.filter((summary) => summary.passed).length;
+  const failed = summaries.length - passed;
+  const lines = ["", `Overall: ${formatStatus(failed === 0)} (${passed}/${summaries.length} datasets passed)`];
+  for (const summary of summaries) {
+    lines.push(`  - ${formatStatus(summary.passed)} ${summary.datasetName}: ${summary.itemCount} items`);
+  }
+  return lines.join("\n");
+}
+
+function formatStatus(passed: boolean) {
+  return passed ? `${ANSI_GREEN}✓ PASS${ANSI_RESET}` : `${ANSI_RED}✗ FAIL${ANSI_RESET}`;
+}
+
+function thresholdForEvaluation(thresholds: Record<string, unknown>, name: string) {
+  const camelName = name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+  const value = thresholds[camelName] ?? thresholds[name];
+  return typeof value === "number" ? value : undefined;
 }
 
 async function runLocalExperiment(input: {
@@ -411,6 +532,10 @@ function elapsed(startedAt: number) {
 function formatValue(value: unknown) {
   if (typeof value === "string") return value.length > 50 ? `${value.substring(0, 47)}...` : value;
   return JSON.stringify(value);
+}
+
+function objectFromUnknown(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function average(values: number[]) {
