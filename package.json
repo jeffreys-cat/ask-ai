@@ -16,7 +16,9 @@
     "worker:ingest": "pnpm --filter @selectdb/jobs worker:ingest"
   },
   "devDependencies": {
+    "@langfuse/otel": "5.3.0",
     "@next/env": "16.2.5",
+    "@opentelemetry/sdk-trace-node": "2.7.1",
     "@types/node": "^22.19.17",
     "dotenv": "^17.4.2",
     "tsx": "^4.20.6",

@@ -23,6 +23,7 @@ type Runtime = Awaited<ReturnType<typeof loadRuntime>>;
 async function main() {
   const runtime = await loadRuntime();
   const { ai, db: dbModule, doris: dorisModule } = runtime;
+  const tracerProvider = await setupLitefuseTracing(ai);
   const args = parseArgs(process.argv.slice(2));
   const client = ai.getLitefuseClient();
   if (!client && !args.local) throw new Error("LITEFUSE_PUBLIC_KEY and LITEFUSE_SECRET_KEY are required to run dataset evals");
@@ -61,7 +62,7 @@ async function main() {
     };
 
     const result = args.local
-      ? await runLocalExperiment({ file: args.local, minItems, experiment })
+      ? await runLocalExperiment({ client, file: args.local, minItems, experiment })
       : await runLitefuseDatasetExperiment({ client: requiredLitefuseClient(client), datasetName, minItems, experiment });
 
     console.log(await result.format({ includeItemResults: args.includeItems === "true" }));
@@ -71,6 +72,8 @@ async function main() {
     }
   } finally {
     await client?.flush();
+    await tracerProvider?.forceFlush();
+    await tracerProvider?.shutdown();
     await doris.end();
     await db.end();
   }
@@ -86,7 +89,30 @@ async function loadRuntime() {
   return { ai, db, doris, rag };
 }
 
+async function setupLitefuseTracing(ai: Ai) {
+  if (!ai.litefuseConfig) return undefined;
+
+  const [{ LangfuseSpanProcessor }, { NodeTracerProvider }] = await Promise.all([
+    import("@langfuse/otel"),
+    import("@opentelemetry/sdk-trace-node"),
+  ]);
+  const provider = new NodeTracerProvider({
+    spanProcessors: [
+      new LangfuseSpanProcessor({
+        publicKey: ai.litefuseConfig.publicKey,
+        secretKey: ai.litefuseConfig.secretKey,
+        baseUrl: ai.litefuseConfig.baseUrl,
+        environment: ai.litefuseConfig.environment,
+        release: ai.litefuseConfig.release,
+      }),
+    ],
+  });
+  provider.register();
+  return provider;
+}
+
 async function runLocalExperiment(input: {
+  client: ReturnType<Ai["getLitefuseClient"]>;
   file: string;
   minItems: number;
   experiment: Omit<ExperimentParams<AskDocsEvalInput, AskDocsEvalExpected, AskDocsEvalMetadata>, "data">;
@@ -95,14 +121,17 @@ async function runLocalExperiment(input: {
   if (data.length < input.minItems) {
     throw new Error(`Local eval file ${input.file} has ${data.length} items; expected at least ${input.minItems}`);
   }
+  if (input.client) {
+    return input.client.experiment.run({ ...input.experiment, data });
+  }
   return runLocalDataExperiment({ ...input.experiment, data });
 }
 
 async function runLitefuseDatasetExperiment(input: {
-  client: NonNullable<ReturnType<typeof getLitefuseClient>>;
+  client: NonNullable<ReturnType<Ai["getLitefuseClient"]>>;
   datasetName: string;
   minItems: number;
-  experiment: Omit<Parameters<NonNullable<ReturnType<typeof getLitefuseClient>>["experiment"]["run"]>[0], "data">;
+  experiment: Omit<Parameters<NonNullable<ReturnType<Ai["getLitefuseClient"]>>["experiment"]["run"]>[0], "data">;
 }) {
   const dataset = await input.client.dataset.get(input.datasetName);
   if (dataset.items.length < input.minItems) {

@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { config } from "dotenv";
-import { ASK_DOCS_EVAL_DATASET_NAME, getLitefuseClient, normalizeAskDocsEvalItem } from "@selectdb/ai";
+import { loadEnvConfig } from "@next/env";
+import type * as AiModule from "@selectdb/ai";
 
-config({ path: ".env.local", quiet: true });
-config({ quiet: true });
+loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
+
+type Ai = typeof AiModule;
 
 async function main() {
+  const ai = await loadAi();
   const args = parseArgs(process.argv.slice(2));
   const file = args.file ?? "eval/ask-docs.samples.example.json";
-  const datasetName = args.dataset ?? process.env.LITEFUSE_EVAL_DATASET ?? ASK_DOCS_EVAL_DATASET_NAME;
-  const client = getLitefuseClient();
+  const datasetName = args.dataset ?? process.env.LITEFUSE_EVAL_DATASET ?? ai.ASK_DOCS_EVAL_DATASET_NAME;
+  const client = ai.getLitefuseClient();
   if (!client) throw new Error("LITEFUSE_PUBLIC_KEY and LITEFUSE_SECRET_KEY are required to seed eval datasets");
 
   const raw = JSON.parse(await readFile(file, "utf8")) as unknown;
@@ -18,8 +20,8 @@ async function main() {
   const items = Array.isArray(raw) ? raw : Array.isArray(object.items) ? object.items : [];
   if (items.length === 0) throw new Error(`No eval items found in ${file}`);
 
-  await client
-    .createDataset({
+  await client.api.datasets
+    .create({
       name: datasetName,
       description: "Ask AI documentation Q&A evaluation dataset.",
       metadata: { source: file, schema: "ask-docs-eval-v1" },
@@ -27,11 +29,11 @@ async function main() {
     .catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       if (!message.includes("409") && !message.toLowerCase().includes("already")) throw error;
-    });
+  });
 
   for (const rawItem of items) {
-    const item = normalizeAskDocsEvalItem(rawItem as { input?: unknown; expectedOutput?: unknown; metadata?: unknown });
-    await client.createDatasetItem({
+    const item = ai.normalizeAskDocsEvalItem(rawItem as { input?: unknown; expectedOutput?: unknown; metadata?: unknown });
+    await client.api.datasetItems.create({
       datasetName,
       id: stableItemId(datasetName, item.input.question, item.input.projectId),
       input: item.input,
@@ -42,6 +44,10 @@ async function main() {
 
   await client.flush();
   console.log(`Seeded ${items.length} items into Litefuse dataset ${datasetName}.`);
+}
+
+async function loadAi(): Promise<Ai> {
+  return import("../packages/ai/src/index");
 }
 
 function stableItemId(datasetName: string, question: string, projectId?: string) {
