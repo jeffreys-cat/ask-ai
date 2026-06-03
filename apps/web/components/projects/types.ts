@@ -1,5 +1,6 @@
 export interface ProjectSummary {
   id: string;
+  organizationId: string;
   name: string;
   description?: string | null;
   status: string;

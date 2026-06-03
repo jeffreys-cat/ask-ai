@@ -266,6 +266,7 @@ function ProjectEmbedPrompt({ project, projectId, isLoading }: { project: Projec
   const embedCode = buildEmbedCode({
     origin: origin || "https://your-ask-ai-host.example",
     projectId: embedProjectId,
+    organizationId: project?.organizationId,
     title,
   });
 
@@ -313,14 +314,29 @@ function ProjectEmbedPrompt({ project, projectId, isLoading }: { project: Projec
   );
 }
 
-function buildEmbedCode({ origin, projectId, title }: { origin: string; projectId: string; title: string }) {
+function buildEmbedCode({
+  origin,
+  projectId,
+  organizationId,
+  title,
+}: {
+  origin: string;
+  projectId: string;
+  organizationId?: string;
+  title: string;
+}) {
+  const attributes = [
+    `src="${escapeHtmlAttribute(origin)}/embed.js"`,
+    `data-project-id="${escapeHtmlAttribute(projectId)}"`,
+    organizationId ? `data-organization-id="${escapeHtmlAttribute(organizationId)}"` : null,
+    `data-title="${escapeHtmlAttribute(title)}"`,
+    `data-placeholder="Ask anything about our docs..."`,
+    `data-primary-color="#087f5b"`,
+    "async",
+  ].filter(Boolean);
+
   return `<script
-  src="${escapeHtmlAttribute(origin)}/embed.js"
-  data-project-id="${escapeHtmlAttribute(projectId)}"
-  data-title="${escapeHtmlAttribute(title)}"
-  data-placeholder="Ask anything about our docs..."
-  data-primary-color="#087f5b"
-  async
+  ${attributes.join("\n  ")}
 ></script>`;
 }
 
