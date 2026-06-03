@@ -8,6 +8,7 @@ import type {
   AskDocsEvalExpected,
   AskDocsEvalMetadata,
   AskDocsEvalOutput,
+  AskDocsEvaluatorPreset,
 } from "@selectdb/ai";
 import type { Citation, RetrievedChunk } from "@selectdb/shared";
 import type { Evaluation, ExperimentItem, ExperimentItemResult, ExperimentParams, ExperimentResult, ExperimentTaskParams } from "@langfuse/client";
@@ -50,6 +51,7 @@ async function main() {
     });
     const summaries: DatasetRunSummary[] = [];
     for (const [index, datasetName] of datasetNames.entries()) {
+      const evaluatorPreset = askDocsEvaluatorPreset(datasetName);
       const experiment = {
         name: "Ask AI docs quality",
         runName: datasetNames.length === 1 ? baseRunName : `${baseRunName}-${datasetName}`,
@@ -59,10 +61,13 @@ async function main() {
           promptLabel: process.env.LITEFUSE_PROMPT_LABEL,
           promptVersion: process.env.LITEFUSE_PROMPT_VERSION,
           release: process.env.LITEFUSE_RELEASE ?? process.env.APP_VERSION ?? process.env.GIT_COMMIT,
+          evaluatorPreset,
         },
         task,
-        evaluators: ai.createAskDocsEvaluators(),
-        runEvaluators: ai.createAskDocsRunEvaluators(),
+        evaluators: ai.createAskDocsEvaluators(evaluatorPreset),
+        runEvaluators: ai.createAskDocsRunEvaluators(
+          evaluatorPreset === "rag" ? ai.RAG_ASK_DOCS_EVAL_THRESHOLDS : ai.DEFAULT_ASK_DOCS_EVAL_THRESHOLDS,
+        ),
         maxConcurrency: numberFrom(args.maxConcurrency ?? process.env.LITEFUSE_EVAL_MAX_CONCURRENCY, 2),
         datasetVersion: args.datasetVersion ?? process.env.LITEFUSE_EVAL_DATASET_VERSION,
       };
@@ -141,6 +146,10 @@ function resolveDatasetNames(input: { ai: Ai; args: ReturnType<typeof parseArgs>
   return [input.ai.ASK_DOCS_EVAL_DATASET_NAME, RETRIEVAL_EVAL_DATASET_NAME];
 }
 
+function askDocsEvaluatorPreset(datasetName: string): AskDocsEvaluatorPreset {
+  return datasetName.includes("retrieval") ? "rag" : "smoke";
+}
+
 interface DatasetRunSummary {
   datasetName: string;
   passed: boolean;
@@ -170,11 +179,12 @@ function summarizeDatasetRun(input: {
     });
   const evaluationNames = new Set(input.result.itemResults.flatMap((item) => item.evaluations.map((evaluation) => evaluation.name)));
   const failedItems = [...evaluationNames].flatMap((name) => {
+    const required = thresholdForEvaluation(thresholds, name) ?? 1;
     const values = input.result.itemResults
       .flatMap((item) => item.evaluations)
       .filter((evaluation) => evaluation.name === name && typeof evaluation.value === "number")
       .map((evaluation) => evaluation.value as number);
-    const failed = values.filter((value) => value < 1).length;
+    const failed = values.filter((value) => value < required).length;
     return failed > 0 ? [{ name, failed, total: values.length }] : [];
   });
 

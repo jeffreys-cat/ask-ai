@@ -7,6 +7,15 @@ export const DEFAULT_ASK_DOCS_EVAL_THRESHOLDS = {
   languageConsistency: 1,
 };
 
+export const RAG_ASK_DOCS_EVAL_THRESHOLDS = {
+  languageConsistency: 1,
+  retrievalRecall: 1,
+  citationCorrectness: 0.8,
+  groundedness: 0.8,
+  answerHelpfulness: 0.8,
+  refusalCorrectness: 1,
+};
+
 export interface AskDocsEvalInput {
   question: string;
   projectId?: string;
@@ -36,7 +45,9 @@ export interface AskDocsEvalOutput {
   error?: string;
 }
 
-export type AskDocsEvalThresholds = typeof DEFAULT_ASK_DOCS_EVAL_THRESHOLDS;
+export type AskDocsEvalThresholds = typeof RAG_ASK_DOCS_EVAL_THRESHOLDS;
+
+export type AskDocsEvaluatorPreset = "smoke" | "rag";
 
 export interface NormalizedAskDocsEvalItem {
   input: AskDocsEvalInput;
@@ -86,19 +97,56 @@ export function normalizeAskDocsEvalItem(item: {
   };
 }
 
-export function createAskDocsEvaluators(): Evaluator<unknown, unknown, Record<string, unknown>>[] {
-  return [async (params) => scoreLanguageConsistency(normalizeParams(params))];
+export function createAskDocsEvaluators(preset: AskDocsEvaluatorPreset = "smoke"): Evaluator<unknown, unknown, Record<string, unknown>>[] {
+  const evaluators = [async (params: { input: unknown; expectedOutput?: unknown; output: unknown; metadata?: unknown }) => scoreLanguageConsistency(normalizeParams(params))];
+  if (preset === "smoke") return evaluators;
+
+  return [
+    ...evaluators,
+    async (params) => scoreRetrievalRecall(normalizeParams(params)),
+    async (params) => scoreCitationCorrectness(normalizeParams(params)),
+    async (params) => scoreGroundedness(normalizeParams(params)),
+    async (params) => scoreAnswerHelpfulness(normalizeParams(params)),
+    async (params) => scoreRefusalCorrectness(normalizeParams(params)),
+  ];
 }
 
 export function createAskDocsRunEvaluators(
-  thresholds: Partial<AskDocsEvalThresholds> = {},
+  thresholds: Partial<AskDocsEvalThresholds> = DEFAULT_ASK_DOCS_EVAL_THRESHOLDS,
 ): RunEvaluator<unknown, unknown, Record<string, unknown>>[] {
-  const resolved = { ...DEFAULT_ASK_DOCS_EVAL_THRESHOLDS, ...thresholds };
+  const resolved = thresholds;
   return [
     async ({ itemResults }) => {
       const averages = averageEvaluations(itemResults.flatMap((item) => item.evaluations));
-      const languageConsistency = averages.get("language_consistency") ?? 0;
-      const pass = languageConsistency >= resolved.languageConsistency;
+      const failures = Object.entries(resolved).flatMap(([thresholdName, threshold]) => {
+        const evaluationName = snakeCase(thresholdName);
+        const actual = averages.get(evaluationName) ?? 0;
+        return actual >= threshold ? [] : [{ evaluationName, actual, threshold }];
+      });
+      const pass = failures.length === 0;
+      const thresholdDiagnostics = Object.entries(resolved).flatMap(([thresholdName, threshold]) => {
+        const evaluationName = snakeCase(thresholdName);
+        const values = itemResults
+          .flatMap((item) => item.evaluations)
+          .filter((evaluation) => evaluation.name === evaluationName && typeof evaluation.value === "number")
+          .map((evaluation) => evaluation.value as number);
+        if (values.length === 0) return [];
+
+        const failedCount = values.filter((value) => value < threshold).length;
+        const passRate = (values.length - failedCount) / values.length;
+        return [
+          {
+            name: `failed_${evaluationName}`,
+            value: failedCount,
+            comment: `${failedCount}/${values.length} items failed ${evaluationName} threshold ${threshold}.`,
+          },
+          {
+            name: `pass_rate_${evaluationName}`,
+            value: passRate,
+            comment: `${values.length - failedCount}/${values.length} items passed ${evaluationName} threshold ${threshold}.`,
+          },
+        ];
+      });
 
       return [
         ...[...averages.entries()].map(([name, value]) => ({
@@ -106,12 +154,15 @@ export function createAskDocsRunEvaluators(
           value,
           comment: `Average ${name} across ${itemResults.length} eval items.`,
         })),
+        ...thresholdDiagnostics,
         {
           name: "regression_gate",
           value: pass ? 1 : 0,
           comment: pass
             ? "All default regression thresholds passed."
-            : `Thresholds failed: language_consistency actual ${languageConsistency.toFixed(3)} < required ${resolved.languageConsistency}.`,
+            : `Thresholds failed: ${failures
+                .map((failure) => `${failure.evaluationName} actual ${failure.actual.toFixed(3)} < required ${failure.threshold}`)
+                .join("; ")}.`,
           metadata: resolved,
         },
       ];
@@ -220,11 +271,18 @@ export function scoreCitationCorrectness(params: NormalizedEvalParams): Evaluati
     .map((id) => params.output.citations[id - 1]?.documentId)
     .filter((documentId): documentId is string => Boolean(documentId));
   const supported = citedDocIds.filter((documentId) => expected.has(documentId));
+  const unsupported = citedDocIds.filter((documentId) => !expected.has(documentId));
+  const missed = expectedDocIds.filter((documentId) => !supported.includes(documentId));
   return {
     name: "citation_correctness",
     value: supported.length / citedDocIds.length,
-    comment: `Supported ${supported.length}/${citedDocIds.length} cited document ids.`,
-    metadata: { expectedDocIds, citedDocIds },
+    comment: [
+      `Supported ${supported.length}/${citedDocIds.length} cited document ids.`,
+      `Expected: ${expectedDocIds.join(", ")}.`,
+      unsupported.length > 0 ? `Unsupported cited: ${unsupported.join(", ")}.` : undefined,
+      missed.length > 0 ? `Expected but not cited: ${missed.join(", ")}.` : undefined,
+    ].filter(Boolean).join(" "),
+    metadata: { expectedDocIds, citedDocIds, supportedDocIds: supported, unsupportedDocIds: unsupported, missedDocIds: missed },
   };
 }
 
@@ -363,6 +421,10 @@ function averageEvaluations(evaluations: Evaluation[]) {
 
 function average(values: number[]) {
   return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function snakeCase(value: string) {
+  return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
 function score(name: string, value: number, comment: string): Evaluation {
