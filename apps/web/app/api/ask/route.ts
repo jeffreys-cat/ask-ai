@@ -4,13 +4,24 @@ import { createChunkStore } from "@selectdb/doris";
 import { mastra, requestRewriterFromEnv, runAskDocsWorkflow } from "@selectdb/ai";
 import { embeddingProviderFromEnv } from "@selectdb/rag";
 import { BadRequestError, type AskStreamEvent } from "@selectdb/shared";
+import { createLogger, serializeError } from "@selectdb/logger";
 import { getPublicRequestContext } from "../../../lib/auth";
 import { parseMetadataFilters } from "../../../lib/metadata-filters";
 import { getDb, getDoris } from "../../../lib/runtime";
 
 export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+  const requestStartedAt = performance.now();
+  let log = createLogger({ component: "web.api.ask", requestId });
+
   try {
+    log.info("ask request received");
+    const contextStartedAt = performance.now();
     const ctx = await getPublicRequestContext(request.headers);
+    log = log.child({ organizationId: ctx.organizationId });
+    log.info("ask timing context resolved", { latencyMs: elapsed(contextStartedAt), totalElapsedMs: elapsed(requestStartedAt) });
+
+    const parseStartedAt = performance.now();
     const body = (await request.json()) as {
       messages?: UIMessage[];
       question?: string;
@@ -25,19 +36,39 @@ export async function POST(request: Request) {
     const question = body.question?.trim() || getLatestUserText(body.messages);
     const agent = resolveAskAgent(body.agentId);
     const filters = parseMetadataFilters(body.filters);
+    log.info("ask timing request parsed", {
+      latencyMs: elapsed(parseStartedAt),
+      totalElapsedMs: elapsed(requestStartedAt),
+      projectId: body.projectId,
+      hasSessionId: Boolean(body.sessionId),
+      topK: body.topK,
+      includeDebugChunks: Boolean(body.includeDebugChunks),
+      hasFilters: Boolean(filters),
+      questionLength: question?.length ?? 0,
+      messageCount: body.messages?.length ?? 0,
+    });
 
     if (!question) throw new BadRequestError("question is required");
     const requestRewriter = requestRewriterFromEnv();
 
     const db = getDb();
+    const documentsStartedAt = performance.now();
     const documentIds = await resolveDocumentIds({
       organizationId: ctx.organizationId,
       projectId: body.projectId,
       documentIds: body.documentIds,
       db,
     });
+    log.info("ask timing documents resolved", {
+      latencyMs: elapsed(documentsStartedAt),
+      totalElapsedMs: elapsed(requestStartedAt),
+      projectId: body.projectId,
+      documentCount: documentIds?.length ?? 0,
+    });
+
     const askRepo = createAskRepo(db);
     let sessionId = body.sessionId;
+    const sessionStartedAt = performance.now();
     if (sessionId) {
       const session = await askRepo.findSession({ organizationId: ctx.organizationId, sessionId });
       if (!session) throw new BadRequestError("session not found");
@@ -52,13 +83,22 @@ export async function POST(request: Request) {
         metadata: { projectId: body.projectId, documentIds, topK: body.topK, filters, retrievalMode: "hybrid+rrf+rerank" },
       });
     }
+    log.info("ask timing session saved", {
+      latencyMs: elapsed(sessionStartedAt),
+      totalElapsedMs: elapsed(requestStartedAt),
+      sessionId,
+      isNewSession: !body.sessionId,
+    });
 
     const stream = createUIMessageStream({
       originalMessages: body.messages,
       execute: async ({ writer }) => {
+        const streamStartedAt = performance.now();
         let finalAnswer = "";
         let finalCitations: Extract<AskStreamEvent, { type: "citations" }>["citations"] = [];
+        let firstDeltaLogged = false;
         const textId = crypto.randomUUID();
+        log.info("ask stream started", { totalElapsedMs: elapsed(requestStartedAt) });
 
         writer.write({ type: "data-session", data: { id: sessionId }, transient: true });
         writer.write({ type: "data-status", data: { label: requestRewriter ? "Rewriting request" : "Retrieving context" }, transient: true });
@@ -78,11 +118,19 @@ export async function POST(request: Request) {
           includeDebugChunks: body.includeDebugChunks,
           agent,
           requestRewriter,
+          requestId,
         })) {
           if (event.type === "request_rewrite") {
             writer.write({ type: "data-status", data: { label: "Retrieving context" }, transient: true });
           }
           if (event.type === "answer_delta") {
+            if (!firstDeltaLogged) {
+              firstDeltaLogged = true;
+              log.info("ask timing first answer delta", {
+                streamElapsedMs: elapsed(streamStartedAt),
+                totalElapsedMs: elapsed(requestStartedAt),
+              });
+            }
             writer.write({ type: "data-status", data: { label: "Answering" }, transient: true });
             writer.write({ type: "text-delta", id: textId, delta: event.delta });
           }
@@ -95,9 +143,20 @@ export async function POST(request: Request) {
           }
           if (event.type === "done") {
             finalAnswer = event.answer;
+            log.info("ask timing workflow done", {
+              streamElapsedMs: elapsed(streamStartedAt),
+              totalElapsedMs: elapsed(requestStartedAt),
+              answerLength: finalAnswer.length,
+              citationCount: finalCitations.length,
+            });
             writer.write({ type: "data-status", data: { label: "Done" }, transient: true });
           }
           if (event.type === "error") {
+            log.warn("ask workflow event error", {
+              streamElapsedMs: elapsed(streamStartedAt),
+              totalElapsedMs: elapsed(requestStartedAt),
+              error: event.message,
+            });
             writer.write({ type: "error", errorText: event.message });
           }
         }
@@ -105,13 +164,22 @@ export async function POST(request: Request) {
         writer.write({ type: "text-end", id: textId });
 
         if (finalAnswer) {
+          const completeStartedAt = performance.now();
           await askRepo.completeSession({ sessionId, answer: finalAnswer, citations: finalCitations });
+          log.info("ask timing session completed", {
+            latencyMs: elapsed(completeStartedAt),
+            streamElapsedMs: elapsed(streamStartedAt),
+            totalElapsedMs: elapsed(requestStartedAt),
+            sessionId,
+          });
         }
       },
     });
 
+    log.info("ask response stream returned", { totalElapsedMs: elapsed(requestStartedAt) });
     return createUIMessageStreamResponse({ stream });
   } catch (error) {
+    log.warn("ask request failed", { totalElapsedMs: elapsed(requestStartedAt), error: serializeError(error) });
     return Response.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       {
@@ -119,6 +187,10 @@ export async function POST(request: Request) {
       },
     );
   }
+}
+
+function elapsed(startedAt: number) {
+  return Math.round(performance.now() - startedAt);
 }
 
 function resolveAskAgent(agentId?: string) {

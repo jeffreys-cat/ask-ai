@@ -192,6 +192,9 @@ importers:
       '@selectdb/doris':
         specifier: workspace:*
         version: link:../doris
+      '@selectdb/logger':
+        specifier: workspace:*
+        version: link:../logger
       '@selectdb/rag':
         specifier: workspace:*
         version: link:../rag
