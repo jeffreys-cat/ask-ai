@@ -35,6 +35,14 @@ EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIM=1536
 ```
 
+如果 chat 和 embedding 使用不同供应商，可以只覆盖 chat：
+
+```env
+CHAT_BASE_URL=https://api.deepseek.com
+CHAT_API_KEY=sk-change-me
+CHAT_MODEL=deepseek-v4-flash
+```
+
 如果 Postgres 跑在宿主机上，容器里不要用 `localhost`，改用：
 
 ```env

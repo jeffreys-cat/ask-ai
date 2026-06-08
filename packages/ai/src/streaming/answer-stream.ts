@@ -10,13 +10,13 @@ export type ChatMessage = {
 };
 
 export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
-  const apiKey = env.OPENAI_API_KEY;
+  const apiKey = env.CHAT_API_KEY ?? env.OPENAI_API_KEY;
   const model = env.CHAT_MODEL;
   if (!apiKey || !model) {
-    throw new Error("OPENAI_API_KEY and CHAT_MODEL are required");
+    throw new Error("CHAT_API_KEY or OPENAI_API_KEY, and CHAT_MODEL are required");
   }
   return {
-    baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+    baseUrl: env.CHAT_BASE_URL ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
     apiKey,
     model,
   };
