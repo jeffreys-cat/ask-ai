@@ -44,6 +44,9 @@ export interface AskDocsWorkflowInput {
 export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGenerator<AskStreamEvent> {
   const workflowStartedAt = performance.now();
   const requestId = input.requestId ?? crypto.randomUUID();
+  const noContextExperiment = envFlag("ASK_AI_EXPERIMENT_NO_CONTEXT");
+  const experimentMaxOutputTokens =
+    numberFromEnv(process.env.ASK_AI_EXPERIMENT_MAX_OUTPUT_TOKENS) ?? numberFromEnv(process.env.CHAT_MAX_TOKENS);
   const log = createLogger({
     component: "ai.ask-docs.workflow",
     requestId,
@@ -65,6 +68,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       topK: input.topK,
       retrievalMode: "hybrid+rrf+rerank",
       queryRewriteEnabled: queryRewriteRequested,
+      experimentNoContext: noContextExperiment,
+      experimentMaxOutputTokens,
     },
     tags: ["ask-ai", "litefuse"],
     attributes: {
@@ -80,6 +85,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       includeDebugChunks: input.includeDebugChunks,
       retrievalMode: "hybrid+rrf+rerank",
       queryRewriteEnabled: queryRewriteRequested,
+      experimentNoContext: noContextExperiment,
+      experimentMaxOutputTokens,
     },
   });
   let chunks: RetrievedChunk[] = [];
@@ -93,6 +100,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     topK: input.topK,
     includeDebugChunks: Boolean(input.includeDebugChunks),
     queryRewriteRequested,
+    experimentNoContext: noContextExperiment,
+    experimentMaxOutputTokens,
   });
 
   try {
@@ -134,302 +143,314 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       rerankProvider: reranker?.provider ?? "none",
       rerankModel: reranker?.model,
       rerankFailOpen,
+      experimentNoContext: noContextExperiment,
     });
-    const retrievalSpan = rootSpan?.createChildSpan({
-      name: "Retrieve document chunk candidates",
-      type: SpanType.RAG_VECTOR_OPERATION,
-      entityId: "retrieve-docs",
-      entityName: "Retrieve document chunk candidates",
-      input: {
-        question: retrievalQuery.query,
-        originalQuestion: input.question,
-        organizationId: input.organizationId,
-        documentIds: input.documentIds,
-        filters: input.filters,
-        topK,
-        candidateK: rerankCandidateK,
-      },
-      attributes: {
-        operation: "query",
-        store: "doris",
-        indexName: "document_chunks",
-        topK,
-      },
-      metadata: {
-        organizationId: input.organizationId,
-        documentIds: input.documentIds,
-        filters: input.filters,
-        topK,
-        candidateK: rerankCandidateK,
-        retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
-        queryRewrite: requestRewriter
-          ? {
-              provider: requestRewriter.provider,
-              model: requestRewriter.model,
-              changed: retrievalQuery.query !== input.question,
-              fallback: retrievalQuery.fallback,
-              error: retrievalQuery.error,
-            }
-          : undefined,
-      },
-    });
-    const retrievalTraceParent = retrievalSpan ?? rootSpan;
-    const recordRetrievalTrace = (event: RetrievalTraceEvent) => {
-      if (event.type === "vector_candidates") {
-        log.info("ask timing vector search", {
-          latencyMs: event.latencyMs,
-          workflowElapsedMs: elapsed(workflowStartedAt),
-          topK: event.topK,
-          candidateK: event.candidateK,
-          returnedCount: event.returnedCount,
-        });
-        const span = retrievalTraceParent?.createChildSpan({
-          name: "Vector search candidates",
-          type: SpanType.RAG_VECTOR_OPERATION,
-          entityId: "vector-search",
-          entityName: "Vector search candidates",
-          input: { topK: event.topK, candidateK: event.candidateK },
-          attributes: {
-            operation: "query",
-            store: "doris-vector",
-            indexName: "document_chunks",
-            topK: event.topK,
-          },
-          metadata: {
-            retrievalStage: "vector",
-            candidateK: event.candidateK,
-            returnedCount: event.returnedCount,
-            latencyMs: event.latencyMs,
-          },
-        });
-        span?.end({
-          output: {
-            returnedCount: event.returnedCount,
-            latencyMs: event.latencyMs,
-            topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
-            candidates: event.candidates,
-          },
-        });
-        return;
-      }
-
-      if (event.type === "keyword_candidates") {
-        log.info("ask timing keyword search", {
-          latencyMs: event.latencyMs,
-          workflowElapsedMs: elapsed(workflowStartedAt),
-          topK: event.topK,
-          candidateK: event.candidateK,
-          returnedCount: event.returnedCount,
-          fallback: Boolean(event.fallback),
-          error: event.error,
-        });
-        const span = retrievalTraceParent?.createChildSpan({
-          name: "BM25 keyword candidates",
-          type: SpanType.RAG_VECTOR_OPERATION,
-          entityId: "bm25-keyword-search",
-          entityName: "BM25 keyword candidates",
-          input: { query: event.query, topK: event.topK, candidateK: event.candidateK },
-          attributes: {
-            operation: "query",
-            store: "doris-bm25",
-            indexName: "document_chunks",
-            topK: event.topK,
-          },
-          metadata: {
-            retrievalStage: "bm25",
-            candidateK: event.candidateK,
-            returnedCount: event.returnedCount,
-            fallback: event.fallback,
-            error: event.error,
-            latencyMs: event.latencyMs,
-          },
-        });
-        span?.end({
-          output: {
-            returnedCount: event.returnedCount,
-            fallback: event.fallback,
-            error: event.error,
-            latencyMs: event.latencyMs,
-            topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
-            candidates: event.candidates,
-          },
-        });
-        return;
-      }
-
-      log.info("ask timing rrf fusion", {
-        workflowElapsedMs: elapsed(workflowStartedAt),
-        topK: event.topK,
-        rrfK: event.rrfK,
-        vectorCount: event.vectorCount,
-        keywordCount: event.keywordCount,
-        overlapCount: event.overlapCount,
-        returnedCount: event.returnedCount,
-      });
-      const span = retrievalTraceParent?.createChildSpan({
-        name: "RRF fusion",
-        type: SpanType.GENERIC,
-        entityId: "rrf-fusion",
-        entityName: "RRF fusion",
+    if (!noContextExperiment) {
+      const retrievalSpan = rootSpan?.createChildSpan({
+        name: "Retrieve document chunk candidates",
+        type: SpanType.RAG_VECTOR_OPERATION,
+        entityId: "retrieve-docs",
+        entityName: "Retrieve document chunk candidates",
         input: {
-          topK: event.topK,
-          rrfK: event.rrfK,
-          vectorCount: event.vectorCount,
-          keywordCount: event.keywordCount,
-          overlapCount: event.overlapCount,
+          question: retrievalQuery.query,
+          originalQuestion: input.question,
+          organizationId: input.organizationId,
+          documentIds: input.documentIds,
+          filters: input.filters,
+          topK,
+          candidateK: rerankCandidateK,
+        },
+        attributes: {
+          operation: "query",
+          store: "doris",
+          indexName: "document_chunks",
+          topK,
         },
         metadata: {
-          retrievalStage: "rrf",
+          organizationId: input.organizationId,
+          documentIds: input.documentIds,
+          filters: input.filters,
+          topK,
+          candidateK: rerankCandidateK,
+          retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
+          queryRewrite: requestRewriter
+            ? {
+                provider: requestRewriter.provider,
+                model: requestRewriter.model,
+                changed: retrievalQuery.query !== input.question,
+                fallback: retrievalQuery.fallback,
+                error: retrievalQuery.error,
+              }
+            : undefined,
+        },
+      });
+      const retrievalTraceParent = retrievalSpan ?? rootSpan;
+      const recordRetrievalTrace = (event: RetrievalTraceEvent) => {
+        if (event.type === "vector_candidates") {
+          log.info("ask timing vector search", {
+            latencyMs: event.latencyMs,
+            workflowElapsedMs: elapsed(workflowStartedAt),
+            topK: event.topK,
+            candidateK: event.candidateK,
+            returnedCount: event.returnedCount,
+          });
+          const span = retrievalTraceParent?.createChildSpan({
+            name: "Vector search candidates",
+            type: SpanType.RAG_VECTOR_OPERATION,
+            entityId: "vector-search",
+            entityName: "Vector search candidates",
+            input: { topK: event.topK, candidateK: event.candidateK },
+            attributes: {
+              operation: "query",
+              store: "doris-vector",
+              indexName: "document_chunks",
+              topK: event.topK,
+            },
+            metadata: {
+              retrievalStage: "vector",
+              candidateK: event.candidateK,
+              returnedCount: event.returnedCount,
+              latencyMs: event.latencyMs,
+            },
+          });
+          span?.end({
+            output: {
+              returnedCount: event.returnedCount,
+              latencyMs: event.latencyMs,
+              topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
+              candidates: event.candidates,
+            },
+          });
+          return;
+        }
+
+        if (event.type === "keyword_candidates") {
+          log.info("ask timing keyword search", {
+            latencyMs: event.latencyMs,
+            workflowElapsedMs: elapsed(workflowStartedAt),
+            topK: event.topK,
+            candidateK: event.candidateK,
+            returnedCount: event.returnedCount,
+            fallback: Boolean(event.fallback),
+            error: event.error,
+          });
+          const span = retrievalTraceParent?.createChildSpan({
+            name: "BM25 keyword candidates",
+            type: SpanType.RAG_VECTOR_OPERATION,
+            entityId: "bm25-keyword-search",
+            entityName: "BM25 keyword candidates",
+            input: { query: event.query, topK: event.topK, candidateK: event.candidateK },
+            attributes: {
+              operation: "query",
+              store: "doris-bm25",
+              indexName: "document_chunks",
+              topK: event.topK,
+            },
+            metadata: {
+              retrievalStage: "bm25",
+              candidateK: event.candidateK,
+              returnedCount: event.returnedCount,
+              fallback: event.fallback,
+              error: event.error,
+              latencyMs: event.latencyMs,
+            },
+          });
+          span?.end({
+            output: {
+              returnedCount: event.returnedCount,
+              fallback: event.fallback,
+              error: event.error,
+              latencyMs: event.latencyMs,
+              topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
+              candidates: event.candidates,
+            },
+          });
+          return;
+        }
+
+        log.info("ask timing rrf fusion", {
+          workflowElapsedMs: elapsed(workflowStartedAt),
+          topK: event.topK,
           rrfK: event.rrfK,
           vectorCount: event.vectorCount,
           keywordCount: event.keywordCount,
           overlapCount: event.overlapCount,
           returnedCount: event.returnedCount,
-        },
-      });
-      span?.end({
-        output: {
-          returnedCount: event.returnedCount,
-          topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
-          candidates: event.candidates,
-        },
-      });
-    };
+        });
+        const span = retrievalTraceParent?.createChildSpan({
+          name: "RRF fusion",
+          type: SpanType.GENERIC,
+          entityId: "rrf-fusion",
+          entityName: "RRF fusion",
+          input: {
+            topK: event.topK,
+            rrfK: event.rrfK,
+            vectorCount: event.vectorCount,
+            keywordCount: event.keywordCount,
+            overlapCount: event.overlapCount,
+          },
+          metadata: {
+            retrievalStage: "rrf",
+            rrfK: event.rrfK,
+            vectorCount: event.vectorCount,
+            keywordCount: event.keywordCount,
+            overlapCount: event.overlapCount,
+            returnedCount: event.returnedCount,
+          },
+        });
+        span?.end({
+          output: {
+            returnedCount: event.returnedCount,
+            topChunkIds: event.candidates.map((candidate) => candidate.chunkId),
+            candidates: event.candidates,
+          },
+        });
+      };
 
-    try {
-      const retrieveStartedAt = performance.now();
-      chunks = await retrieveChunkCandidates({
-        retriever: input.retriever,
-        embeddings: timedEmbeddingProvider(input.embeddings, log, workflowStartedAt),
-        organizationId: input.organizationId,
-        question: retrievalQuery.query,
-        topK,
-        candidateK: rerankCandidateK,
-        documentIds: input.documentIds,
-        filters: input.filters,
-        accessContext: input.accessContext,
-        onRetrievalTrace: recordRetrievalTrace,
-      });
-      log.info("ask timing retrieval total", {
-        latencyMs: elapsed(retrieveStartedAt),
-        workflowElapsedMs: elapsed(workflowStartedAt),
-        chunkCount: chunks.length,
-        documentCount: [...new Set(chunks.map((chunk) => chunk.documentId))].length,
-      });
-      retrievalSpan?.end({
-        output: {
+      try {
+        const retrieveStartedAt = performance.now();
+        chunks = await retrieveChunkCandidates({
+          retriever: input.retriever,
+          embeddings: timedEmbeddingProvider(input.embeddings, log, workflowStartedAt),
+          organizationId: input.organizationId,
+          question: retrievalQuery.query,
+          topK,
+          candidateK: rerankCandidateK,
+          documentIds: input.documentIds,
+          filters: input.filters,
+          accessContext: input.accessContext,
+          onRetrievalTrace: recordRetrievalTrace,
+        });
+        log.info("ask timing retrieval total", {
+          latencyMs: elapsed(retrieveStartedAt),
+          workflowElapsedMs: elapsed(workflowStartedAt),
           chunkCount: chunks.length,
-          documentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
+          documentCount: [...new Set(chunks.map((chunk) => chunk.documentId))].length,
+        });
+        retrievalSpan?.end({
+          output: {
+            chunkCount: chunks.length,
+            documentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
+          },
+        });
+      } catch (error) {
+        log.warn("ask retrieval failed", {
+          workflowElapsedMs: elapsed(workflowStartedAt),
+          error: serializeError(error),
+        });
+        retrievalSpan?.error({ error: asError(error) });
+        throw error;
+      }
+
+      const rerankSpan = rootSpan?.createChildSpan({
+        name: "Rerank document chunk candidates",
+        type: SpanType.RAG_ACTION,
+        entityId: "rerank-docs",
+        entityName: "Rerank document chunk candidates",
+        input: {
+          question: retrievalQuery.query,
+          originalQuestion: input.question,
+          candidateCount: chunks.length,
+          candidateDocumentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
+          topK,
+          provider: reranker?.provider ?? "none",
+          model: reranker?.model,
+        },
+        attributes: {
+          action: "rerank",
+          candidateCount: chunks.length,
+          topN: topK,
+          scorer: reranker?.provider ?? "none",
+        },
+        metadata: {
+          operation: "rerank",
+          provider: reranker?.provider ?? "none",
+          model: reranker?.model,
+          endpoint: reranker?.observability?.endpoint,
+          timeoutMs: reranker?.observability?.timeoutMs,
+          maxDocChars: reranker?.observability?.maxDocChars,
+          candidateCount: chunks.length,
+          topK,
+          candidateK: rerankCandidateK,
+          failOpen: rerankFailOpen,
+          retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
+          enabled: Boolean(reranker),
         },
       });
-    } catch (error) {
-      log.warn("ask retrieval failed", {
-        workflowElapsedMs: elapsed(workflowStartedAt),
-        error: serializeError(error),
-      });
-      retrievalSpan?.error({ error: asError(error) });
-      throw error;
-    }
 
-    const rerankSpan = rootSpan?.createChildSpan({
-      name: "Rerank document chunk candidates",
-      type: SpanType.RAG_ACTION,
-      entityId: "rerank-docs",
-      entityName: "Rerank document chunk candidates",
-      input: {
-        question: retrievalQuery.query,
-        originalQuestion: input.question,
-        candidateCount: chunks.length,
-        candidateDocumentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
-        topK,
-        provider: reranker?.provider ?? "none",
-        model: reranker?.model,
-      },
-      attributes: {
-        action: "rerank",
-        candidateCount: chunks.length,
-        topN: topK,
-        scorer: reranker?.provider ?? "none",
-      },
-      metadata: {
-        operation: "rerank",
-        provider: reranker?.provider ?? "none",
-        model: reranker?.model,
-        endpoint: reranker?.observability?.endpoint,
-        timeoutMs: reranker?.observability?.timeoutMs,
-        maxDocChars: reranker?.observability?.maxDocChars,
-        candidateCount: chunks.length,
-        topK,
-        candidateK: rerankCandidateK,
-        failOpen: rerankFailOpen,
-        retrievalMode: reranker ? "hybrid+rrf+rerank" : "hybrid+rrf",
-        enabled: Boolean(reranker),
-      },
-    });
-
-    try {
-      const startedAt = performance.now();
-      const candidateCount = chunks.length;
-      const result = await rerankChunks({
-        query: retrievalQuery.query,
-        chunks,
-        topK,
-        reranker,
-        failOpen: rerankFailOpen,
-      });
-      chunks = result.chunks;
-      log.info("ask timing rerank", {
-        latencyMs: elapsed(startedAt),
-        workflowElapsedMs: elapsed(workflowStartedAt),
-        provider: reranker?.provider ?? "none",
-        model: reranker?.model,
-        candidateCount,
-        chunkCount: chunks.length,
-        usedRerank: result.usedRerank,
-        fallback: result.fallback,
-        error: result.error,
-      });
-      rerankSpan?.end({
-        output: {
+      try {
+        const startedAt = performance.now();
+        const candidateCount = chunks.length;
+        const result = await rerankChunks({
+          query: retrievalQuery.query,
+          chunks,
+          topK,
+          reranker,
+          failOpen: rerankFailOpen,
+        });
+        chunks = result.chunks;
+        log.info("ask timing rerank", {
+          latencyMs: elapsed(startedAt),
+          workflowElapsedMs: elapsed(workflowStartedAt),
+          provider: reranker?.provider ?? "none",
+          model: reranker?.model,
+          candidateCount,
           chunkCount: chunks.length,
           usedRerank: result.usedRerank,
           fallback: result.fallback,
           error: result.error,
-          latencyMs: elapsed(startedAt),
+        });
+        rerankSpan?.end({
+          output: {
+            chunkCount: chunks.length,
+            usedRerank: result.usedRerank,
+            fallback: result.fallback,
+            error: result.error,
+            latencyMs: elapsed(startedAt),
+            provider: reranker?.provider ?? "none",
+            model: reranker?.model,
+            topChunkIds: chunks.map((chunk) => chunk.chunkId),
+            topDocumentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
+            rerankScores: chunks
+              .map((chunk) => chunk.retrieval?.rerank?.score)
+              .filter((score): score is number => typeof score === "number"),
+          },
+        });
+      } catch (error) {
+        log.warn("ask rerank failed", {
+          workflowElapsedMs: elapsed(workflowStartedAt),
           provider: reranker?.provider ?? "none",
           model: reranker?.model,
-          topChunkIds: chunks.map((chunk) => chunk.chunkId),
-          topDocumentIds: [...new Set(chunks.map((chunk) => chunk.documentId))],
-          rerankScores: chunks
-            .map((chunk) => chunk.retrieval?.rerank?.score)
-            .filter((score): score is number => typeof score === "number"),
-        },
-      });
-    } catch (error) {
-      log.warn("ask rerank failed", {
+          error: serializeError(error),
+        });
+        rerankSpan?.error({ error: asError(error) });
+        throw error;
+      }
+
+      if (input.includeDebugChunks) {
+        yield { type: "retrieved_chunks", chunks };
+      }
+    } else {
+      log.info("ask experiment no-context enabled", {
         workflowElapsedMs: elapsed(workflowStartedAt),
-        provider: reranker?.provider ?? "none",
-        model: reranker?.model,
-        error: serializeError(error),
+        agentName: input.agent?.name ?? "doc-answer",
       });
-      rerankSpan?.error({ error: asError(error) });
-      throw error;
     }
 
-    if (input.includeDebugChunks) {
-      yield { type: "retrieved_chunks", chunks };
-    }
-
-    citations = buildCitations(chunks);
+    citations = noContextExperiment ? [] : buildCitations(chunks);
     const promptBuildStartedAt = performance.now();
     const promptResult = await buildDocAnswerMessages({
       question: input.question,
-      context: packContext(chunks),
+      context: noContextExperiment ? "" : packContext(chunks),
       citations,
       agent: input.agent,
     });
 
-    const chatConfig = input.chat ?? chatConfigFromEnv();
+    const baseChatConfig = input.chat ?? chatConfigFromEnv();
+    const chatConfig = {
+      ...baseChatConfig,
+      maxTokens: experimentMaxOutputTokens ?? baseChatConfig.maxTokens,
+    };
     log.info("ask timing prompt built", {
       latencyMs: elapsed(promptBuildStartedAt),
       workflowElapsedMs: elapsed(workflowStartedAt),
@@ -473,6 +494,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       log.info("ask timing generation request started", {
         workflowElapsedMs: elapsed(workflowStartedAt),
         model: chatConfig.model,
+        maxTokens: chatConfig.maxTokens ?? null,
       });
       for await (const delta of streamOpenAICompatibleChat(
         chatConfig,
@@ -495,6 +517,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
               latencyMs,
               workflowElapsedMs: elapsed(workflowStartedAt),
               model: chatConfig.model,
+              maxTokens: chatConfig.maxTokens ?? null,
               status,
               contentType,
             });
@@ -504,6 +527,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
               latencyMs,
               workflowElapsedMs: elapsed(workflowStartedAt),
               model: chatConfig.model,
+              maxTokens: chatConfig.maxTokens ?? null,
               hasDelta,
               hasUsage,
             });
@@ -513,6 +537,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
               latencyMs,
               workflowElapsedMs: elapsed(workflowStartedAt),
               model: chatConfig.model,
+              maxTokens: chatConfig.maxTokens ?? null,
               deltaLength,
             });
           },
@@ -521,6 +546,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
               latencyMs,
               workflowElapsedMs: elapsed(workflowStartedAt),
               model: chatConfig.model,
+              maxTokens: chatConfig.maxTokens ?? null,
               promptTokenCount: usage.prompt_tokens ?? null,
               completionTokenCount: usage.completion_tokens ?? null,
               totalTokenCount: usage.total_tokens ?? null,
@@ -544,6 +570,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         latencyMs: elapsed(generationStartedAt),
         workflowElapsedMs: elapsed(workflowStartedAt),
         model: chatConfig.model,
+        maxTokens: chatConfig.maxTokens ?? null,
         answerLength: answer.length,
         promptTokenCount,
         completionTokenCount,
@@ -619,6 +646,16 @@ function timedEmbeddingProvider(provider: EmbeddingProvider, log: ReturnType<typ
       }
     },
   };
+}
+
+function envFlag(name: string) {
+  return process.env[name]?.toLowerCase() === "true";
+}
+
+function numberFromEnv(value: string | undefined) {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function elapsed(startedAt: number) {

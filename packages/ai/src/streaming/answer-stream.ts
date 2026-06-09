@@ -3,6 +3,7 @@ export interface ChatStreamConfig {
   apiKey: string;
   model: string;
   includeUsageInStream?: boolean;
+  maxTokens?: number;
 }
 
 export interface ChatStreamTelemetry {
@@ -41,6 +42,7 @@ export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
     apiKey,
     model,
     includeUsageInStream: env.CHAT_STREAM_INCLUDE_USAGE ? env.CHAT_STREAM_INCLUDE_USAGE.toLowerCase() === "true" : true,
+    maxTokens: numberFromEnv(env.CHAT_MAX_TOKENS),
   };
 }
 
@@ -70,6 +72,7 @@ export async function* streamOpenAICompatibleChat(
       model: config.model,
       stream: true,
       stream_options: includeUsageInStream ? { include_usage: true } : undefined,
+      max_tokens: config.maxTokens,
       messages,
     }),
   });
@@ -143,6 +146,7 @@ export async function completeOpenAICompatibleChat(config: ChatStreamConfig, mes
     body: JSON.stringify({
       model: config.model,
       stream: false,
+      max_tokens: config.maxTokens,
       messages,
     }),
   });
@@ -157,4 +161,10 @@ export async function completeOpenAICompatibleChat(config: ChatStreamConfig, mes
 
 function elapsed(startedAt: number) {
   return Math.round(performance.now() - startedAt);
+}
+
+function numberFromEnv(value: string | undefined) {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
