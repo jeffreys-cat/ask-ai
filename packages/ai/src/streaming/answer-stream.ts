@@ -4,6 +4,7 @@ export interface ChatStreamConfig {
   model: string;
   includeUsageInStream?: boolean;
   maxTokens?: number;
+  enableThinking?: boolean;
 }
 
 export interface ChatStreamTelemetry {
@@ -43,6 +44,7 @@ export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
     model,
     includeUsageInStream: env.CHAT_STREAM_INCLUDE_USAGE ? env.CHAT_STREAM_INCLUDE_USAGE.toLowerCase() === "true" : true,
     maxTokens: numberFromEnv(env.CHAT_MAX_TOKENS),
+    enableThinking: env.CHAT_ENABLE_THINKING ? env.CHAT_ENABLE_THINKING.toLowerCase() === "true" : false,
   };
 }
 
@@ -72,7 +74,7 @@ export async function* streamOpenAICompatibleChat(
       model: config.model,
       stream: true,
       stream_options: includeUsageInStream ? { include_usage: true } : undefined,
-      enable_thinking: false,
+      enable_thinking: config.enableThinking ?? false,
       max_tokens: config.maxTokens,
       messages,
     }),
@@ -147,7 +149,7 @@ export async function completeOpenAICompatibleChat(config: ChatStreamConfig, mes
     body: JSON.stringify({
       model: config.model,
       stream: false,
-      enable_thinking: false,
+      enable_thinking: config.enableThinking ?? false,
       max_tokens: config.maxTokens,
       messages,
     }),
