@@ -72,6 +72,7 @@ export async function* streamOpenAICompatibleChat(
       model: config.model,
       stream: true,
       stream_options: includeUsageInStream ? { include_usage: true } : undefined,
+      enable_thinking: false,
       max_tokens: config.maxTokens,
       messages,
     }),
@@ -146,6 +147,7 @@ export async function completeOpenAICompatibleChat(config: ChatStreamConfig, mes
     body: JSON.stringify({
       model: config.model,
       stream: false,
+      enable_thinking: false,
       max_tokens: config.maxTokens,
       messages,
     }),
