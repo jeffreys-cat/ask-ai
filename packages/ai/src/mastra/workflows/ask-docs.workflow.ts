@@ -421,6 +421,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     }
 
     citations = buildCitations(chunks);
+    const promptBuildStartedAt = performance.now();
     const promptResult = await buildDocAnswerMessages({
       question: input.question,
       context: packContext(chunks),
@@ -429,6 +430,15 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     });
 
     const chatConfig = input.chat ?? chatConfigFromEnv();
+    log.info("ask timing prompt built", {
+      latencyMs: elapsed(promptBuildStartedAt),
+      workflowElapsedMs: elapsed(workflowStartedAt),
+      model: chatConfig.model,
+      messageCount: promptResult.messages.length,
+      contextCharCount: promptResult.messages.reduce((total, message) => total + message.content.length, 0),
+      citationCount: citations.length,
+      chunkCount: chunks.length,
+    });
     log.info("ask generation configured", {
       workflowElapsedMs: elapsed(workflowStartedAt),
       model: chatConfig.model,
@@ -460,18 +470,64 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       let completionTokenCount: number | null = null;
       let totalTokenCount: number | null = null;
       const generationStartedAt = performance.now();
-      for await (const delta of streamOpenAICompatibleChat(chatConfig, promptResult.messages, ({ usage }) => {
-        if (!usage) return;
-        if (typeof usage.prompt_tokens === "number") {
-          promptTokenCount = usage.prompt_tokens;
-        }
-        if (typeof usage.completion_tokens === "number") {
-          completionTokenCount = usage.completion_tokens;
-        }
-        if (typeof usage.total_tokens === "number") {
-          totalTokenCount = usage.total_tokens;
-        }
-      })) {
+      log.info("ask timing generation request started", {
+        workflowElapsedMs: elapsed(workflowStartedAt),
+        model: chatConfig.model,
+      });
+      for await (const delta of streamOpenAICompatibleChat(
+        chatConfig,
+        promptResult.messages,
+        ({ usage }) => {
+          if (!usage) return;
+          if (typeof usage.prompt_tokens === "number") {
+            promptTokenCount = usage.prompt_tokens;
+          }
+          if (typeof usage.completion_tokens === "number") {
+            completionTokenCount = usage.completion_tokens;
+          }
+          if (typeof usage.total_tokens === "number") {
+            totalTokenCount = usage.total_tokens;
+          }
+        },
+        {
+          onResponseHeaders: ({ latencyMs, status, contentType }) => {
+            log.info("ask timing generation response headers", {
+              latencyMs,
+              workflowElapsedMs: elapsed(workflowStartedAt),
+              model: chatConfig.model,
+              status,
+              contentType,
+            });
+          },
+          onFirstPayload: ({ latencyMs, hasDelta, hasUsage }) => {
+            log.info("ask timing generation first payload", {
+              latencyMs,
+              workflowElapsedMs: elapsed(workflowStartedAt),
+              model: chatConfig.model,
+              hasDelta,
+              hasUsage,
+            });
+          },
+          onFirstDelta: ({ latencyMs, deltaLength }) => {
+            log.info("ask timing generation first content delta", {
+              latencyMs,
+              workflowElapsedMs: elapsed(workflowStartedAt),
+              model: chatConfig.model,
+              deltaLength,
+            });
+          },
+          onUsage: ({ latencyMs, usage }) => {
+            log.info("ask timing generation usage chunk", {
+              latencyMs,
+              workflowElapsedMs: elapsed(workflowStartedAt),
+              model: chatConfig.model,
+              promptTokenCount: usage.prompt_tokens ?? null,
+              completionTokenCount: usage.completion_tokens ?? null,
+              totalTokenCount: usage.total_tokens ?? null,
+            });
+          },
+        },
+      )) {
         if (!completionStarted) {
           completionStarted = true;
           log.info("ask timing generation first delta", {

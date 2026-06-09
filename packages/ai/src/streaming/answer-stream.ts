@@ -5,6 +5,14 @@ export interface ChatStreamConfig {
   includeUsageInStream?: boolean;
 }
 
+export interface ChatStreamTelemetry {
+  onRequestStarted?: () => void;
+  onResponseHeaders?: (event: { latencyMs: number; status: number; contentType: string | null }) => void;
+  onFirstPayload?: (event: { latencyMs: number; hasDelta: boolean; hasUsage: boolean }) => void;
+  onFirstDelta?: (event: { latencyMs: number; deltaLength: number }) => void;
+  onUsage?: (event: { latencyMs: number; usage: ChatUsage }) => void;
+}
+
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
@@ -47,8 +55,11 @@ export async function* streamOpenAICompatibleChat(
   config: ChatStreamConfig,
   messages: ChatMessage[],
   onChunk?: (chunk: StreamChunk) => void,
+  telemetry?: ChatStreamTelemetry,
 ): AsyncGenerator<string> {
   const includeUsageInStream = config.includeUsageInStream !== false;
+  const requestStartedAt = performance.now();
+  telemetry?.onRequestStarted?.();
   const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -63,6 +74,12 @@ export async function* streamOpenAICompatibleChat(
     }),
   });
 
+  telemetry?.onResponseHeaders?.({
+    latencyMs: elapsed(requestStartedAt),
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+  });
+
   if (!response.ok || !response.body) {
     throw new Error(`Chat request failed: ${response.status} ${await response.text()}`);
   }
@@ -70,6 +87,8 @@ export async function* streamOpenAICompatibleChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawFirstPayload = false;
+  let sawFirstDelta = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -84,11 +103,32 @@ export async function* streamOpenAICompatibleChat(
       const data = trimmed.slice(5).trim();
       if (data === "[DONE]") return;
       const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }>; usage?: ChatUsage };
+      if (!sawFirstPayload) {
+        sawFirstPayload = true;
+        telemetry?.onFirstPayload?.({
+          latencyMs: elapsed(requestStartedAt),
+          hasDelta: Boolean(payload.choices?.[0]?.delta?.content),
+          hasUsage: Boolean(payload.usage),
+        });
+      }
       if (onChunk) {
         onChunk({ delta: payload.choices?.[0]?.delta?.content, usage: payload.usage });
       }
+      if (payload.usage) {
+        telemetry?.onUsage?.({
+          latencyMs: elapsed(requestStartedAt),
+          usage: payload.usage,
+        });
+      }
       const delta = payload.choices?.[0]?.delta?.content;
       if (delta) yield delta;
+      if (delta && !sawFirstDelta) {
+        sawFirstDelta = true;
+        telemetry?.onFirstDelta?.({
+          latencyMs: elapsed(requestStartedAt),
+          deltaLength: delta.length,
+        });
+      }
     }
   }
 }
@@ -113,4 +153,8 @@ export async function completeOpenAICompatibleChat(config: ChatStreamConfig, mes
 
   const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
   return payload.choices?.[0]?.message?.content?.trim() ?? "";
+}
+
+function elapsed(startedAt: number) {
+  return Math.round(performance.now() - startedAt);
 }
