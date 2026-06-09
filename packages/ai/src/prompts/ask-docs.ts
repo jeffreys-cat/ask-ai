@@ -2,12 +2,8 @@ import type { AskAgentInput, Citation } from "@selectdb/shared";
 
 export function buildAskDocsPrompt(input: { question: string; context: string; citations: Citation[]; agent?: AskAgentInput }) {
   return [
-    input.agent?.instructions ?? "You answer questions using only the provided document context.",
-    "If the context is insufficient, say you do not have enough information.",
-    "Cite supporting sources inline using bracket numbers like [1]. ",
-    "",
+    input.agent?.instructions ?? "Answer only from the provided context. If it is insufficient, say so. Do not guess. Cite as [1].",
     `Question: ${input.question}`,
-    "",
-    `Context:\n${input.context}`,
+    `Context: ${input.context}`,
   ].join("\n");
 }

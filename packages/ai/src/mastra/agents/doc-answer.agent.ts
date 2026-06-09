@@ -32,7 +32,9 @@ export async function buildDocAnswerMessages(input: {
   const hasContext = Boolean(input.context.trim());
   const instructions =
     input.agent?.instructions ??
-    (hasContext ? "You answer questions using only the provided document context." : "Answer from retrieved organization-scoped document context.");
+    (hasContext
+      ? "Answer only from the provided context. If it is insufficient, say so. Do not guess. Cite as [1]."
+      : "Answer only from retrieved document context. If none exists, say so. Do not guess.");
   const fallback = hasContext ? buildAskDocsPrompt(input) : buildNoContextPrompt(input.question, input.agent);
   const fallbackMessages = hasContext ? docAnswerFallbackMessages({ ...input, instructions }) : noContextFallbackMessages(input.question, instructions);
 
@@ -71,16 +73,15 @@ function docAnswerFallbackMessages(input: { question: string; context: string; i
       role: "system",
       content: [
         input.instructions,
-        "",
-        "Answer the user question using only the provided document context.",
-        "If the context is insufficient, say you do not have enough information from the documents.",
-        "Cite supporting sources inline using bracket numbers like [1].",
-        "Do not cite sources that are not present in the context.",
+        "Use only the provided context.",
+        "If it is insufficient, say so.",
+        "Do not guess.",
+        "Cite as [1].",
       ].join("\n"),
     },
     {
       role: "user",
-      content: [`Question:\n${input.question}`, "", `Context:\n${input.context}`].join("\n"),
+      content: [`Question: ${input.question}`, `Context: ${input.context}`].join("\n"),
     },
   ] satisfies ChatMessage[];
 }
@@ -91,9 +92,8 @@ function noContextFallbackMessages(question: string, instructions: string) {
       role: "system",
       content: [
         instructions,
-        "",
-        "The document retrieval step returned no relevant context.",
-        "Answer briefly that there is not enough document context to answer.",
+        "No relevant context was retrieved.",
+        "Answer briefly that there is not enough document context.",
         "Do not invent facts.",
         "Do not invent citations.",
       ].join("\n"),

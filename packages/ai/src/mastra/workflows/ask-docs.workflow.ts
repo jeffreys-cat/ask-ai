@@ -4,6 +4,7 @@ import type { AccessContext, AskAgentInput, AskStreamEvent, Citation, MetadataFi
 import {
   buildCitations,
   packContext,
+  packContextChunks,
   normalizeTopK,
   rerankCandidateKFromEnv,
   rerankerFromEnv,
@@ -47,6 +48,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
   const noContextExperiment = envFlag("ASK_AI_EXPERIMENT_NO_CONTEXT");
   const experimentMaxOutputTokens =
     numberFromEnv(process.env.ASK_AI_EXPERIMENT_MAX_OUTPUT_TOKENS) ?? numberFromEnv(process.env.CHAT_MAX_TOKENS);
+  const contextMaxChars = numberFromEnv(process.env.ASK_AI_CONTEXT_MAX_CHARS) ?? 2200;
   const log = createLogger({
     component: "ai.ask-docs.workflow",
     requestId,
@@ -70,6 +72,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       queryRewriteEnabled: queryRewriteRequested,
       experimentNoContext: noContextExperiment,
       experimentMaxOutputTokens,
+      contextMaxChars,
     },
     tags: ["ask-ai", "litefuse"],
     attributes: {
@@ -87,6 +90,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       queryRewriteEnabled: queryRewriteRequested,
       experimentNoContext: noContextExperiment,
       experimentMaxOutputTokens,
+      contextMaxChars,
     },
   });
   let chunks: RetrievedChunk[] = [];
@@ -102,6 +106,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
     queryRewriteRequested,
     experimentNoContext: noContextExperiment,
     experimentMaxOutputTokens,
+    contextMaxChars,
   });
 
   try {
@@ -144,6 +149,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       rerankModel: reranker?.model,
       rerankFailOpen,
       experimentNoContext: noContextExperiment,
+      contextMaxChars,
     });
     if (!noContextExperiment) {
       const retrievalSpan = rootSpan?.createChildSpan({
@@ -437,11 +443,13 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       });
     }
 
-    citations = noContextExperiment ? [] : buildCitations(chunks);
+    const packedChunks = noContextExperiment ? [] : packContextChunks(chunks, contextMaxChars);
+    const packedContext = noContextExperiment ? "" : packContext(packedChunks, contextMaxChars);
+    citations = noContextExperiment ? [] : buildCitations(packedChunks);
     const promptBuildStartedAt = performance.now();
     const promptResult = await buildDocAnswerMessages({
       question: input.question,
-      context: noContextExperiment ? "" : packContext(chunks),
+      context: packedContext,
       citations,
       agent: input.agent,
     });
@@ -456,21 +464,24 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       workflowElapsedMs: elapsed(workflowStartedAt),
       model: chatConfig.model,
       messageCount: promptResult.messages.length,
-      contextCharCount: promptResult.messages.reduce((total, message) => total + message.content.length, 0),
+      contextCharCount: packedContext.length,
+      promptCharCount: promptResult.messages.reduce((total, message) => total + message.content.length, 0),
       citationCount: citations.length,
-      chunkCount: chunks.length,
+      chunkCount: packedChunks.length,
+      contextMaxChars,
     });
     log.info("ask generation configured", {
       workflowElapsedMs: elapsed(workflowStartedAt),
       model: chatConfig.model,
       provider: providerFromBaseUrl(chatConfig.baseUrl),
-      chunkCount: chunks.length,
+      chunkCount: packedChunks.length,
       citationCount: citations.length,
+      contextMaxChars,
     });
     const modelSpan = rootSpan?.createChildSpan({
       name: "Generate answer",
       type: SpanType.MODEL_GENERATION,
-      input: { messages: promptResult.messages, citationCount: citations.length, chunkCount: chunks.length },
+      input: { messages: promptResult.messages, citationCount: citations.length, chunkCount: packedChunks.length },
       attributes: {
         model: chatConfig.model,
         provider: providerFromBaseUrl(chatConfig.baseUrl),
@@ -480,7 +491,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       },
       metadata: {
         citationCount: citations.length,
-        chunkCount: chunks.length,
+        chunkCount: packedChunks.length,
         langfuse: promptResult.litefusePrompt ? { prompt: promptResult.litefusePrompt } : undefined,
       },
     });
