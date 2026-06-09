@@ -466,6 +466,8 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       messageCount: promptResult.messages.length,
       contextCharCount: packedContext.length,
       promptCharCount: promptResult.messages.reduce((total, message) => total + message.content.length, 0),
+      systemPromptCharCount: promptResult.messages[0]?.content.length ?? 0,
+      userPromptCharCount: promptResult.messages[1]?.content.length ?? 0,
       citationCount: citations.length,
       chunkCount: packedChunks.length,
       contextMaxChars,
