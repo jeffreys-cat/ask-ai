@@ -1,8 +1,8 @@
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
 import { createAskRepo, createDocumentsRepo, createProjectsRepo } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
+import { embeddingProviderFromEnv, normalizeTopK } from "@selectdb/rag";
 import { mastra, requestRewriterFromEnv, runAskDocsWorkflow } from "@selectdb/ai";
-import { embeddingProviderFromEnv } from "@selectdb/rag";
 import { BadRequestError, type AskStreamEvent } from "@selectdb/shared";
 import { createLogger, serializeError } from "@selectdb/logger";
 import { getPublicRequestContext } from "../../../lib/auth";
@@ -33,6 +33,7 @@ export async function POST(request: Request) {
       sessionId?: string;
       filters?: unknown;
     };
+    const topK = normalizeTopK(body.topK);
     const question = body.question?.trim() || getLatestUserText(body.messages);
     const agent = resolveAskAgent(body.agentId);
     const filters = parseMetadataFilters(body.filters);
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
       totalElapsedMs: elapsed(requestStartedAt),
       projectId: body.projectId,
       hasSessionId: Boolean(body.sessionId),
-      topK: body.topK,
+      topK,
       includeDebugChunks: Boolean(body.includeDebugChunks),
       hasFilters: Boolean(filters),
       questionLength: question?.length ?? 0,
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
         organizationId: ctx.organizationId,
         userId: ctx.userId,
         question,
-        metadata: { projectId: body.projectId, documentIds, topK: body.topK, filters, retrievalMode: "hybrid+rrf+rerank" },
+        metadata: { projectId: body.projectId, documentIds, topK, filters, retrievalMode: "hybrid+rrf+rerank" },
       });
     }
     log.info("ask timing session saved", {
@@ -114,7 +115,7 @@ export async function POST(request: Request) {
           documentIds,
           filters,
           accessContext: { userId: ctx.userId },
-          topK: body.topK,
+          topK,
           includeDebugChunks: body.includeDebugChunks,
           agent,
           requestRewriter,

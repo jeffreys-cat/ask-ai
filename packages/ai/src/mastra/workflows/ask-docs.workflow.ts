@@ -4,6 +4,7 @@ import type { AccessContext, AskAgentInput, AskStreamEvent, Citation, MetadataFi
 import {
   buildCitations,
   packContext,
+  normalizeTopK,
   rerankCandidateKFromEnv,
   rerankerFromEnv,
   rerankChunks,
@@ -95,7 +96,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
   });
 
   try {
-    const topK = normalizeWorkflowTopK(input.topK);
+    const topK = normalizeTopK(input.topK);
     const requestRewriter = input.requestRewriter === null ? undefined : (input.requestRewriter ?? requestRewriterFromEnv());
     const queryRewriteFailOpen = input.queryRewriteFailOpen ?? queryRewriteFailOpenFromEnv();
     const rewriteStartedAt = performance.now();
@@ -545,11 +546,6 @@ function timedEmbeddingProvider(provider: EmbeddingProvider, log: ReturnType<typ
       }
     },
   };
-}
-
-function normalizeWorkflowTopK(topK: number | undefined) {
-  if (topK === undefined || !Number.isFinite(topK)) return 8;
-  return Math.min(Math.max(Math.trunc(topK), 1), 50);
 }
 
 function elapsed(startedAt: number) {

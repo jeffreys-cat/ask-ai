@@ -75,7 +75,7 @@ flowchart TD
   J --> K["保存 session、answer 和 citations"]
 ```
 
-默认 `topK` 是 8。`/api/askai/search` 会校验 `topK` 必须是 1 到 50 的整数；底层 Doris chunk store 也会把 `topK` 归一化到 1 到 50。
+默认 `topK` 是 3。`/api/askai/search` 会校验 `topK` 必须是 1 到 50 的整数；底层 Doris chunk store 也会把 `topK` 归一化到 1 到 50。
 
 ## 当前限制
 

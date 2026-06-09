@@ -1,4 +1,5 @@
 import type { RetrievedChunk } from "@selectdb/shared";
+import { normalizeTopK } from "./topk";
 
 export interface RerankResult {
   index: number;
@@ -319,11 +320,6 @@ function readResultsFromPath(payload: unknown, path: string[]) {
     })
     .filter((item) => Number.isInteger(item.index) && Number.isFinite(item.score))
     .sort((a, b) => b.score - a.score);
-}
-
-function normalizeTopK(topK: number) {
-  if (!Number.isFinite(topK)) return 8;
-  return Math.min(Math.max(Math.trunc(topK), 1), 50);
 }
 
 function normalizePositiveInteger(value: number | undefined, fallback: number, max: number) {

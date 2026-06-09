@@ -5,4 +5,5 @@ export * from "./citations/build-citations";
 export * from "./embedding";
 export * from "./retrieval/context-pack";
 export * from "./retrieval/rerank";
+export * from "./retrieval/topk";
 export * from "./retrieval/retrieve";

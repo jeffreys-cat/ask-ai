@@ -3,8 +3,8 @@ import { runAskDocsWorkflow, mastra, requestRewriterFromEnv } from "@selectdb/ai
 import { createAskRepo, createDocumentsRepo, createProjectApiKeysRepo, createProjectsRepo, hashProjectApiKey, isProjectApiKey } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
 import { createLogger, serializeError } from "@selectdb/logger";
-import { embeddingProviderFromEnv } from "@selectdb/rag";
 import { BadRequestError, UnauthorizedError, type AskStreamEvent, type MetadataFilters } from "@selectdb/shared";
+import { embeddingProviderFromEnv, normalizeTopK } from "@selectdb/rag";
 import { parseMetadataFilters } from "../../../../lib/metadata-filters";
 import { getDb, getDoris } from "../../../../lib/runtime";
 
@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     const parseStartedAt = performance.now();
     const body = (await request.json()) as { query?: string; topK?: number; filters?: unknown };
     const query = body.query?.trim();
-    const topK = body.topK ?? 8;
+    const topK = normalizeTopK(body.topK);
     const filters = parseMetadataFilters(body.filters);
     log.info("askai search timing request parsed", {
       latencyMs: elapsed(parseStartedAt),
@@ -30,7 +30,9 @@ export async function POST(request: Request) {
     });
 
     if (!query) throw new BadRequestError("query is required");
-    if (!Number.isInteger(topK) || topK <= 0 || topK > 50) throw new BadRequestError("topK must be an integer between 1 and 50");
+    if (body.topK !== undefined && (!Number.isInteger(body.topK) || body.topK <= 0 || body.topK > 50)) {
+      throw new BadRequestError("topK must be an integer between 1 and 50");
+    }
 
     const db = getDb();
     const contextStartedAt = performance.now();

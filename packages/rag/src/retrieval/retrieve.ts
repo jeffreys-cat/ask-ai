@@ -1,6 +1,7 @@
 import type { AccessContext, MetadataFilters, RetrievalTraceEvent, RetrievedChunk } from "@selectdb/shared";
 import type { EmbeddingProvider } from "../embedding";
 import { normalizeRerankCandidateK, rerankChunks, type Reranker } from "./rerank";
+import { normalizeTopK } from "./topk";
 
 export interface Retriever {
   search(input: {
@@ -75,6 +76,5 @@ export async function retrieveChunkCandidates(input: {
 }
 
 function normalizeRetrieveTopK(topK: number | undefined) {
-  if (topK === undefined || !Number.isFinite(topK)) return 8;
-  return Math.min(Math.max(Math.trunc(topK), 1), 50);
+  return normalizeTopK(topK);
 }

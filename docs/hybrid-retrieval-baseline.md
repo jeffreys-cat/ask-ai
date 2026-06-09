@@ -21,7 +21,7 @@
 ```json
 {
   "query": "How do I configure authentication?",
-  "topK": 8,
+  "topK": 3,
   "filters": {
     "version": ["3.0"],
     "language": "zh-CN",
