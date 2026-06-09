@@ -2,6 +2,7 @@ export interface ChatStreamConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+  includeUsageInStream?: boolean;
 }
 
 export type ChatMessage = {
@@ -31,6 +32,7 @@ export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
     baseUrl: env.CHAT_BASE_URL ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
     apiKey,
     model,
+    includeUsageInStream: env.CHAT_STREAM_INCLUDE_USAGE ? env.CHAT_STREAM_INCLUDE_USAGE.toLowerCase() === "true" : true,
   };
 }
 
@@ -46,6 +48,7 @@ export async function* streamOpenAICompatibleChat(
   messages: ChatMessage[],
   onChunk?: (chunk: StreamChunk) => void,
 ): AsyncGenerator<string> {
+  const includeUsageInStream = config.includeUsageInStream !== false;
   const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -55,6 +58,7 @@ export async function* streamOpenAICompatibleChat(
     body: JSON.stringify({
       model: config.model,
       stream: true,
+      stream_options: includeUsageInStream ? { include_usage: true } : undefined,
       messages,
     }),
   });
@@ -81,10 +85,7 @@ export async function* streamOpenAICompatibleChat(
       if (data === "[DONE]") return;
       const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }>; usage?: ChatUsage };
       if (onChunk) {
-        onChunk({
-          delta: payload.choices?.[0]?.delta?.content,
-          usage: payload.usage,
-        });
+        onChunk({ delta: payload.choices?.[0]?.delta?.content, usage: payload.usage });
       }
       const delta = payload.choices?.[0]?.delta?.content;
       if (delta) yield delta;
