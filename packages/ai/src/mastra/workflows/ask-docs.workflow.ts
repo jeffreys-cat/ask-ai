@@ -456,8 +456,22 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
 
     try {
       let completionStarted = false;
+      let promptTokenCount: number | null = null;
+      let completionTokenCount: number | null = null;
+      let totalTokenCount: number | null = null;
       const generationStartedAt = performance.now();
-      for await (const delta of streamOpenAICompatibleChat(chatConfig, promptResult.messages)) {
+      for await (const delta of streamOpenAICompatibleChat(chatConfig, promptResult.messages, ({ usage }) => {
+        if (!usage) return;
+        if (typeof usage.prompt_tokens === "number") {
+          promptTokenCount = usage.prompt_tokens;
+        }
+        if (typeof usage.completion_tokens === "number") {
+          completionTokenCount = usage.completion_tokens;
+        }
+        if (typeof usage.total_tokens === "number") {
+          totalTokenCount = usage.total_tokens;
+        }
+      })) {
         if (!completionStarted) {
           completionStarted = true;
           log.info("ask timing generation first delta", {
@@ -475,6 +489,9 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         workflowElapsedMs: elapsed(workflowStartedAt),
         model: chatConfig.model,
         answerLength: answer.length,
+        promptTokenCount,
+        completionTokenCount,
+        totalTokenCount,
       });
       modelSpan?.end({
         output: answer,

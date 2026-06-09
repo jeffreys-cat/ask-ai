@@ -9,6 +9,18 @@ export type ChatMessage = {
   content: string;
 };
 
+export interface ChatUsage {
+  completion_tokens?: number;
+  prompt_tokens?: number;
+  total_tokens?: number;
+  [key: string]: number | undefined;
+}
+
+export type StreamChunk = {
+  delta?: string;
+  usage?: ChatUsage;
+};
+
 export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
   const apiKey = env.CHAT_API_KEY ?? env.OPENAI_API_KEY;
   const model = env.CHAT_MODEL;
@@ -22,11 +34,18 @@ export function chatConfigFromEnv(env = process.env): ChatStreamConfig {
   };
 }
 
-export async function* streamOpenAICompatibleAnswer(config: ChatStreamConfig, prompt: string): AsyncGenerator<string> {
+export async function* streamOpenAICompatibleAnswer(
+  config: ChatStreamConfig,
+  prompt: string,
+): AsyncGenerator<string> {
   yield* streamOpenAICompatibleChat(config, [{ role: "user", content: prompt }]);
 }
 
-export async function* streamOpenAICompatibleChat(config: ChatStreamConfig, messages: ChatMessage[]): AsyncGenerator<string> {
+export async function* streamOpenAICompatibleChat(
+  config: ChatStreamConfig,
+  messages: ChatMessage[],
+  onChunk?: (chunk: StreamChunk) => void,
+): AsyncGenerator<string> {
   const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -60,7 +79,13 @@ export async function* streamOpenAICompatibleChat(config: ChatStreamConfig, mess
       if (!trimmed.startsWith("data:")) continue;
       const data = trimmed.slice(5).trim();
       if (data === "[DONE]") return;
-      const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+      const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }>; usage?: ChatUsage };
+      if (onChunk) {
+        onChunk({
+          delta: payload.choices?.[0]?.delta?.content,
+          usage: payload.usage,
+        });
+      }
       const delta = payload.choices?.[0]?.delta?.content;
       if (delta) yield delta;
     }
