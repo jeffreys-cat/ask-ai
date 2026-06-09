@@ -1,7 +1,7 @@
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } from "ai";
 import { createAskRepo, createDocumentsRepo, createProjectsRepo } from "@selectdb/db";
 import { createChunkStore } from "@selectdb/doris";
-import { embeddingProviderFromEnv, normalizeTopK } from "@selectdb/rag";
+import { DEFAULT_TOPK, normalizeTopK } from "@selectdb/rag";
 import { mastra, requestRewriterFromEnv, runAskDocsWorkflow } from "@selectdb/ai";
 import { BadRequestError, type AskStreamEvent } from "@selectdb/shared";
 import { createLogger, serializeError } from "@selectdb/logger";
@@ -10,6 +10,7 @@ import { parseMetadataFilters } from "../../../lib/metadata-filters";
 import { getDb, getDoris } from "../../../lib/runtime";
 
 export async function POST(request: Request) {
+  const requestTopK = DEFAULT_TOPK;
   const requestId = crypto.randomUUID();
   const requestStartedAt = performance.now();
   let log = createLogger({ component: "web.api.ask", requestId });
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
       sessionId?: string;
       filters?: unknown;
     };
-    const topK = normalizeTopK(body.topK);
+    const topK = normalizeTopK(requestTopK);
     const question = body.question?.trim() || getLatestUserText(body.messages);
     const agent = resolveAskAgent(body.agentId);
     const filters = parseMetadataFilters(body.filters);

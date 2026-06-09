@@ -4,11 +4,12 @@ import { createAskRepo, createDocumentsRepo, createProjectApiKeysRepo, createPro
 import { createChunkStore } from "@selectdb/doris";
 import { createLogger, serializeError } from "@selectdb/logger";
 import { BadRequestError, UnauthorizedError, type AskStreamEvent, type MetadataFilters } from "@selectdb/shared";
-import { embeddingProviderFromEnv, normalizeTopK } from "@selectdb/rag";
+import { DEFAULT_TOPK, normalizeTopK } from "@selectdb/rag";
 import { parseMetadataFilters } from "../../../../lib/metadata-filters";
 import { getDb, getDoris } from "../../../../lib/runtime";
 
 export async function POST(request: Request) {
+  const requestTopK = DEFAULT_TOPK;
   const requestId = crypto.randomUUID();
   const requestStartedAt = performance.now();
   let log = createLogger({ component: "web.api.askai.search", requestId });
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
     const parseStartedAt = performance.now();
     const body = (await request.json()) as { query?: string; topK?: number; filters?: unknown };
     const query = body.query?.trim();
-    const topK = normalizeTopK(body.topK);
+    const topK = normalizeTopK(requestTopK);
     const filters = parseMetadataFilters(body.filters);
     log.info("askai search timing request parsed", {
       latencyMs: elapsed(parseStartedAt),
@@ -30,8 +31,11 @@ export async function POST(request: Request) {
     });
 
     if (!query) throw new BadRequestError("query is required");
-    if (body.topK !== undefined && (!Number.isInteger(body.topK) || body.topK <= 0 || body.topK > 50)) {
-      throw new BadRequestError("topK must be an integer between 1 and 50");
+    if (body.topK !== undefined && body.topK !== requestTopK) {
+      log.warn("askai search request topK ignored", {
+        requestedTopK: body.topK,
+        effectiveTopK: topK,
+      });
     }
 
     const db = getDb();

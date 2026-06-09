@@ -163,7 +163,7 @@ export function EmbeddedAskWidget({
           agentId: ASK_DOC_ANSWER_AGENT.id,
           projectId: selectedProjectId,
           sessionId: selectedSessionId || undefined,
-          topK: 8,
+          topK: 3,
           includeDebugChunks: false,
         },
       },
