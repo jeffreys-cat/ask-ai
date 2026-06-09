@@ -490,6 +490,9 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
       let promptTokenCount: number | null = null;
       let completionTokenCount: number | null = null;
       let totalTokenCount: number | null = null;
+      let generationResponseHeadersLatencyMs: number | null = null;
+      let generationFirstPayloadLatencyMs: number | null = null;
+      let generationFirstDeltaLatencyMs: number | null = null;
       const generationStartedAt = performance.now();
       log.info("ask timing generation request started", {
         workflowElapsedMs: elapsed(workflowStartedAt),
@@ -513,6 +516,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         },
         {
           onResponseHeaders: ({ latencyMs, status, contentType }) => {
+            generationResponseHeadersLatencyMs = latencyMs;
             log.info("ask timing generation response headers", {
               latencyMs,
               workflowElapsedMs: elapsed(workflowStartedAt),
@@ -523,6 +527,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
             });
           },
           onFirstPayload: ({ latencyMs, hasDelta, hasUsage }) => {
+            generationFirstPayloadLatencyMs = latencyMs;
             log.info("ask timing generation first payload", {
               latencyMs,
               workflowElapsedMs: elapsed(workflowStartedAt),
@@ -533,6 +538,7 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
             });
           },
           onFirstDelta: ({ latencyMs, deltaLength }) => {
+            generationFirstDeltaLatencyMs = latencyMs;
             log.info("ask timing generation first content delta", {
               latencyMs,
               workflowElapsedMs: elapsed(workflowStartedAt),
@@ -575,6 +581,21 @@ export async function* runAskDocsWorkflow(input: AskDocsWorkflowInput): AsyncGen
         promptTokenCount,
         completionTokenCount,
         totalTokenCount,
+      });
+      log.info("ask timing generation summary", {
+        workflowElapsedMs: elapsed(workflowStartedAt),
+        model: chatConfig.model,
+        maxTokens: chatConfig.maxTokens ?? null,
+        responseHeadersMs: generationResponseHeadersLatencyMs,
+        firstPayloadMs: generationFirstPayloadLatencyMs,
+        firstDeltaMs: generationFirstDeltaLatencyMs,
+        outputTokens: completionTokenCount,
+        promptTokens: promptTokenCount,
+        totalTokens: totalTokenCount,
+        tailMs:
+          generationFirstDeltaLatencyMs !== null
+            ? elapsed(generationStartedAt) - generationFirstDeltaLatencyMs
+            : null,
       });
       modelSpan?.end({
         output: answer,
