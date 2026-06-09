@@ -4,7 +4,7 @@ import { createAskRepo, createDocumentsRepo, createProjectApiKeysRepo, createPro
 import { createChunkStore } from "@selectdb/doris";
 import { createLogger, serializeError } from "@selectdb/logger";
 import { BadRequestError, UnauthorizedError, type AskStreamEvent, type MetadataFilters } from "@selectdb/shared";
-import { DEFAULT_TOPK, normalizeTopK } from "@selectdb/rag";
+import { DEFAULT_TOPK, embeddingProviderFromEnv, normalizeTopK } from "@selectdb/rag";
 import { parseMetadataFilters } from "../../../../lib/metadata-filters";
 import { getDb, getDoris } from "../../../../lib/runtime";
 
